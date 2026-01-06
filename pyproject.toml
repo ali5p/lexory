@@ -1,0 +1,25 @@
+[project]
+name = "lexory"
+version = "0.1.0"
+description = "Minimal RAG-based learning backend"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.104.0",
+    "pydantic>=2.0.0",
+    "qdrant-client>=1.7.0",
+    "polars>=0.19.0",
+    "sentence-transformers>=2.2.0",
+    "uvicorn>=0.24.0",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "F",  # pyflakes (real bugs)
+    "I",  # import sorting
+]
+fixable = ["ALL"]
