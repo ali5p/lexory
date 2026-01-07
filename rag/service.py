@@ -55,12 +55,19 @@ class InMemoryPatternStore:  # TODO replace with SQL + batch consolidation
     def upsert(self, pattern_id: str, data: dict):
         self.patterns[pattern_id] = data
 
-    def get_by_user_session(self, user_id: str, session_id: Optional[str]) -> List[dict]:
-        return [
-            p
-            for p in self.patterns.values()
-            if p["user_id"] == user_id and (session_id is None or p.get("last_session_id") == session_id)
-        ]
+    def get_by_user_session(
+        self, user_id: str, session_id: Optional[str], limit: int = 5
+    ) -> List[dict]:
+        if session_id is not None:
+            return [
+                p
+                for p in self.patterns.values()
+                if p["user_id"] == user_id and p.get("last_session_id") == session_id
+            ]
+
+        user_patterns = [p for p in self.patterns.values() if p["user_id"] == user_id]
+        user_patterns.sort(key=lambda p: p.get("updated_at", ""), reverse=True)
+        return user_patterns[:limit]
 
 
 class InMemoryArtifactStore:  # TODO replace with SQL storage
@@ -122,7 +129,10 @@ class RAGService:
         )
 
         self._create_or_update_mistake_pattern_from_text(
-            user_text=user_text, embedding=embedding, session_id=session_id
+            user_text=user_text,
+            user_text_id=user_text_id,
+            embedding=embedding,
+            session_id=session_id,
         )
 
         return document_id, user_text_id
@@ -194,7 +204,11 @@ class RAGService:
         self._create_or_update_mistake_pattern(cluster_texts, user_id, session_id)
 
     def _create_or_update_mistake_pattern_from_text(
-        self, user_text: UserText, embedding: List[float], session_id: Optional[str]
+        self,
+        user_text: UserText,
+        user_text_id: str,
+        embedding: List[float],
+        session_id: Optional[str],
     ) -> None:
         similar_results = self.qdrant.search(
             collection_name="user_text_embeddings",
@@ -208,6 +222,8 @@ class RAGService:
             if result["score"] < self.pattern_similarity_threshold:
                 continue
             payload = result.get("payload", {})
+            if payload.get("user_text_id") == user_text_id:
+                continue
             candidate_text = payload.get("text")
             if candidate_text:
                 cluster_texts.append(candidate_text)
@@ -280,14 +296,12 @@ class RAGService:
         session_id: Optional[str],
     ) -> ContextAssembly:
         detected_patterns = self._retrieve_mistake_patterns(query_embedding, user_filter)
-        long_term_dynamics = self._retrieve_learning_summaries(query_embedding, user_filter)
         recently_used_explanations = self._retrieve_lesson_artifacts(
             query_embedding, user_filter, session_id
         )
 
         return ContextAssembly(
             detected_patterns=detected_patterns,
-            long_term_dynamics=long_term_dynamics,
             recently_used_explanations=recently_used_explanations,
         )
 
@@ -329,43 +343,6 @@ class RAGService:
 
         return patterns
 
-    def _retrieve_learning_summaries(
-        self, query_embedding: List[float], user_filter: Dict[str, str]
-    ) -> List[dict]:
-        results = self.qdrant.search(
-            collection_name="learning_summary_embeddings",
-            query_vector=query_embedding,
-            limit=5,
-            filter_dict=user_filter,
-        )
-
-        summaries = []
-        seen_summary_ids: Set[str] = set()
-
-        for result in results:
-            if result["score"] < self.min_similarity_score:
-                continue
-
-            payload = result.get("payload", {})
-            summary_id = payload.get("summary_id", result["id"])
-
-            if summary_id in seen_summary_ids:
-                continue
-
-            seen_summary_ids.add(summary_id)
-            summaries.append(
-                {
-                    "summary_id": summary_id,
-                    "content": payload.get("content", ""),
-                    "created_at": payload.get("created_at", ""),
-                    "similarity_score": result["score"],
-                }
-            )
-
-            if len(summaries) >= 3:
-                break
-
-        return summaries
 
     def _retrieve_lesson_artifacts(
         self,
