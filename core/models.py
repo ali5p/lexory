@@ -50,21 +50,35 @@ class SessionContext(BaseModel):
 class DocumentRequest(BaseModel):
     text: str
     user_id: str
+    session_id: Optional[str] = None
 
 
 class DocumentResponse(BaseModel):
     document_id: str
+    user_text_id: str
     status: str
 
 
 class QueryRequest(BaseModel):
     user_id: str
     query: Optional[str] = None
+    session_id: Optional[str] = None
+
+
+class ContextAssembly(BaseModel):
+    detected_patterns: list[dict]
+    long_term_dynamics: list[dict]
+    recently_used_explanations: list[dict]
+
+
+class LessonResponse(BaseModel):
+    topic: str
+    explanation: str
+    exercises: list[str]
+    approach_type: str
 
 
 class QueryResponse(BaseModel):
-    lesson_content: str
-    relevant_patterns: list[str]
-    relevant_summaries: list[str]
-    relevant_artifacts: list[str]
+    lesson: LessonResponse
+    context: ContextAssembly
 
