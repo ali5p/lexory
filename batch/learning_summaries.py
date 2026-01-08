@@ -34,7 +34,7 @@ class LearningSummaryRow(BaseModel):
     window_type: str
     scope: str
     scope_key: Optional[str]
-    metrics: Dict[str, float]
+    metrics: Dict[str, object]
     summary_text: str
     computed_at: datetime
 
@@ -238,13 +238,15 @@ class LearningSummaryBatch:
         for user_id, user_df in grouped.group_by("user_id"):
             metrics = self._compute_metrics(user_df, window_type, scope=SCOPE_GLOBAL)
             if metrics is None:
-                continue
-            summary_text = self._build_summary_text(
-                window_type=window_type,
-                scope=SCOPE_GLOBAL,
-                pattern_desc="overall mistakes",
-                metrics=metrics,
-            )
+                metrics = {"cold_start": True}
+                summary_text = self._cold_start_text()
+            else:
+                summary_text = self._build_summary_text(
+                    window_type=window_type,
+                    scope=SCOPE_GLOBAL,
+                    pattern_desc="overall mistakes",
+                    metrics=metrics,
+                )
             summaries.append(
                 LearningSummaryRow(
                     id=str(uuid.uuid4()),
@@ -279,13 +281,15 @@ class LearningSummaryBatch:
             pattern_desc = keys["pattern_desc"] or "this pattern"
             metrics = self._compute_metrics(user_pattern_df, window_type, scope=SCOPE_PATTERN)
             if metrics is None:
-                continue
-            summary_text = self._build_summary_text(
-                window_type=window_type,
-                scope=SCOPE_PATTERN,
-                pattern_desc=pattern_desc,
-                metrics=metrics,
-            )
+                metrics = {"cold_start": True}
+                summary_text = self._cold_start_text()
+            else:
+                summary_text = self._build_summary_text(
+                    window_type=window_type,
+                    scope=SCOPE_PATTERN,
+                    pattern_desc=pattern_desc,
+                    metrics=metrics,
+                )
             summaries.append(
                 LearningSummaryRow(
                     id=str(uuid.uuid4()),
@@ -432,6 +436,10 @@ class LearningSummaryBatch:
         if metrics["error_rate_delta"] > 0:
             return "address recurring pitfalls before new material"
         return "continue current pace with targeted drills"
+
+    @staticmethod
+    def _cold_start_text() -> str:
+        return "Initial observations collected. Not enough data yet to assess trends."
 
     # ----- Persistence to Qdrant -----
     def _upsert_qdrant(self, summary: LearningSummaryRow) -> None:
