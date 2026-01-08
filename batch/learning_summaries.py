@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta
-from typing import Dict, Iterable, List, Optional, Tuple
+from datetime import datetime, timedelta, timezone
+from typing import Dict, List, Optional
 
 import polars as pl
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from rag.embedder import Embedder
 from vectorstore.qdrant_client import QdrantStore
@@ -134,16 +134,18 @@ class LearningSummaryBatch:
         self.sql_store = sql_store
         self.qdrant = qdrant
         self.embedder = embedder
+        self._normalized_inputs: Optional[BatchInputs] = None
 
     # ----- Public entrypoint -----
     def run(self, as_of: Optional[datetime] = None) -> None:
-        as_of = as_of or datetime.utcnow()
+        as_of = as_of or datetime.now(timezone.utc)
 
         inputs = self._load_inputs()
         if inputs.user_texts.is_empty():
             return
 
         normalized = self._normalize_time(inputs)
+        self._normalized_inputs = normalized
         joined = self._join_events(normalized)
         if joined.is_empty():
             return
@@ -156,10 +158,18 @@ class LearningSummaryBatch:
                 continue
 
             global_summaries = self._compute_scope_global(
-                window_df, window_type, window_start, as_of
+                window_df,
+                window_type,
+                window_start,
+                as_of,
+                lesson_artifacts=normalized.lesson_artifacts,
             )
             pattern_summaries = self._compute_scope_pattern(
-                window_df, window_type, window_start, as_of
+                window_df,
+                window_type,
+                window_start,
+                as_of,
+                lesson_artifacts=normalized.lesson_artifacts,
             )
 
             all_summaries = global_summaries + pattern_summaries
@@ -225,7 +235,12 @@ class LearningSummaryBatch:
 
     # ----- Aggregations -----
     def _compute_scope_global(
-        self, df: pl.DataFrame, window_type: str, window_start, as_of: datetime
+        self,
+        df: pl.DataFrame,
+        window_type: str,
+        window_start,
+        as_of: datetime,
+        lesson_artifacts: pl.DataFrame,
     ) -> List[LearningSummaryRow]:
         grouped = (
             df.group_by(["user_id", "date"])
@@ -236,7 +251,13 @@ class LearningSummaryBatch:
             return []
         summaries = []
         for user_id, user_df in grouped.group_by("user_id"):
-            metrics = self._compute_metrics(user_df, window_type, scope=SCOPE_GLOBAL)
+            exposure_count = self._exposure_count_global(user_id, lesson_artifacts, window_start, as_of.date())
+            metrics = self._compute_metrics(
+                user_df,
+                window_type,
+                scope=SCOPE_GLOBAL,
+                exposure_count=exposure_count,
+            )
             if metrics is None:
                 metrics = {"cold_start": True}
                 summary_text = self._cold_start_text()
@@ -262,7 +283,12 @@ class LearningSummaryBatch:
         return summaries
 
     def _compute_scope_pattern(
-        self, df: pl.DataFrame, window_type: str, window_start, as_of: datetime
+        self,
+        df: pl.DataFrame,
+        window_type: str,
+        window_start,
+        as_of: datetime,
+        lesson_artifacts: pl.DataFrame,
     ) -> List[LearningSummaryRow]:
         filtered = df.drop_nulls("pattern_id")
         if filtered.is_empty():
@@ -279,7 +305,19 @@ class LearningSummaryBatch:
             user_id = keys["user_id"]
             pattern_id = keys["pattern_id"]
             pattern_desc = keys["pattern_desc"] or "this pattern"
-            metrics = self._compute_metrics(user_pattern_df, window_type, scope=SCOPE_PATTERN)
+            exposure_count = self._exposure_count_pattern(
+                user_id=user_id,
+                pattern_id=pattern_id,
+                lesson_artifacts=lesson_artifacts,
+                window_start=window_start,
+                window_end=as_of.date(),
+            )
+            metrics = self._compute_metrics(
+                user_pattern_df,
+                window_type,
+                scope=SCOPE_PATTERN,
+                exposure_count=exposure_count,
+            )
             if metrics is None:
                 metrics = {"cold_start": True}
                 summary_text = self._cold_start_text()
@@ -307,7 +345,11 @@ class LearningSummaryBatch:
 
     # ----- Metrics -----
     def _compute_metrics(
-        self, counts_df: pl.DataFrame, window_type: str, scope: str
+        self,
+        counts_df: pl.DataFrame,
+        window_type: str,
+        scope: str,
+        exposure_count: int,
     ) -> Optional[Dict[str, float]]:
         if counts_df.height < 2:
             return None
@@ -315,10 +357,11 @@ class LearningSummaryBatch:
         counts_df = counts_df.with_columns(
             pl.col("occurrences").alias("count"),
             pl.arange(0, pl.count()).alias("t_idx"),
+            pl.col("occurrences").ewm_mean(alpha=0.3).alias("ewma_count"),
         )
 
-        # frequency_trend: simple slope
-        slope = self._slope(counts_df, "t_idx", "count")
+        # frequency_trend_v2: EWMA smooths daily volatility; slope on EWMA captures direction without noise.
+        slope = self._slope(counts_df, "t_idx", "ewma_count")
 
         # error_rate_delta: last vs first normalized
         first_count = counts_df["count"][0]
@@ -326,19 +369,20 @@ class LearningSummaryBatch:
         denom = max(first_count, 1)
         error_rate_delta = (last_count - first_count) / denom
 
-        # mastery_score: reward reduction and recency (lower slope, lower last_count)
+        # mastery_score: rewards sustained reduction (lower last count and downward EWMA slope).
         mastery_score = self._bounded(
             (self._neg(last_count) + self._neg(slope)) / 2.0
         )
 
-        # stability_score: inverse variance
-        variance = counts_df["count"].var()
+        # stability_score_v2: variance only after improvement onset; fallback to full-window variance if no improvement.
+        variance = self._stability_variance(counts_df)
         stability_score = self._bounded(1.0 / (1.0 + variance))
 
-        # exposure_vs_improvement: sessions vs delta
-        sessions = counts_df["sessions"] if "sessions" in counts_df.columns else pl.Series([])
-        mean_sessions = sessions.mean() if not sessions.is_empty() else 0.0
-        exposure_vs_improvement = self._bounded((mean_sessions - error_rate_delta) / 2.0)
+        # exposure_vs_improvement_v2: compares lesson exposures (pedagogical effort) against error reduction.
+        exposure_vs_improvement = self._compute_exposure_vs_improvement(
+            exposure_count=exposure_count,
+            error_rate_delta=error_rate_delta,
+        )
 
         return {
             "frequency_trend": float(slope),
@@ -369,6 +413,22 @@ class LearningSummaryBatch:
     @staticmethod
     def _neg(value: float) -> float:
         return -value
+
+    def _stability_variance(self, df: pl.DataFrame) -> float:
+        ewma = df["ewma_count"]
+        diffs = ewma.diff().fill_null(0.0)
+        negative_indices = [i for i, v in enumerate(diffs) if v < 0]
+        if negative_indices:
+            start_idx = negative_indices[0]
+            tail = ewma[start_idx:]
+        else:
+            tail = ewma
+        return float(pl.Series(tail).var())
+
+    def _compute_exposure_vs_improvement(self, exposure_count: int, error_rate_delta: float) -> float:
+        # More exposures with stronger error reduction increases the score; regression despite exposures lowers it.
+        score = (exposure_count * (-error_rate_delta)) / (exposure_count + 1.0)
+        return self._bounded(score)
 
     # ----- Summary text -----
     def _build_summary_text(
@@ -436,6 +496,39 @@ class LearningSummaryBatch:
         if metrics["error_rate_delta"] > 0:
             return "address recurring pitfalls before new material"
         return "continue current pace with targeted drills"
+
+    def _exposure_count_global(
+        self, user_id: str, lesson_artifacts: pl.DataFrame, window_start, window_end
+    ) -> int:
+        if lesson_artifacts.is_empty():
+            return 0
+        df = lesson_artifacts.filter(
+            (pl.col("user_id") == user_id)
+            & (pl.col("date") >= pl.lit(window_start))
+            & (pl.col("date") <= pl.lit(window_end))
+        )
+        if df.is_empty():
+            return 0
+        exposures = df.select(pl.col("patterns_covered").list.lengths().sum()).item()
+        return int(exposures or 0)
+
+    def _exposure_count_pattern(
+        self,
+        user_id: str,
+        pattern_id: str,
+        lesson_artifacts: pl.DataFrame,
+        window_start,
+        window_end,
+    ) -> int:
+        if lesson_artifacts.is_empty():
+            return 0
+        df = lesson_artifacts.filter(
+            (pl.col("user_id") == user_id)
+            & (pl.col("date") >= pl.lit(window_start))
+            & (pl.col("date") <= pl.lit(window_end))
+            & pl.col("patterns_covered").list.contains(pattern_id)
+        )
+        return int(df.height)
 
     @staticmethod
     def _cold_start_text() -> str:
