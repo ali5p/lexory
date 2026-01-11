@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set
 
 from core.models import (
@@ -265,7 +265,7 @@ class RAGService:
 
         description = f"Recurring mistake: {unique_texts[0][:120]}"
         examples = unique_texts[: self.max_examples_per_pattern]
-        updated_at = datetime.utcnow().isoformat()
+        updated_at = datetime.now(timezone.utc).isoformat()
 
         pattern_payload = {
             "pattern_id": pattern_id,
@@ -344,11 +344,12 @@ class RAGService:
         return patterns
 
 
+    # Lesson Artifacts
+
     def _retrieve_lesson_artifacts(
         self,
         query_embedding: List[float],
         user_filter: Dict[str, str],
-        session_id: Optional[str],
     ) -> List[dict]:
         results = self.qdrant.search(
             collection_name="lesson_artifact_embeddings",
@@ -391,7 +392,7 @@ class RAGService:
         self, lesson: LessonResponse, user_id: str, session_id: Optional[str]
     ) -> None:
         artifact_id = str(uuid.uuid4())
-        created_at = datetime.utcnow().isoformat()
+        created_at = datetime.now(timezone.utc).isoformat()
         content_for_embedding = " ".join(
             [lesson.topic, lesson.explanation, " ".join(lesson.exercises)]
         )
