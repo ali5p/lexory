@@ -149,7 +149,10 @@ class RAGService:
         lesson = self._construct_lesson(context, query.user_id)
 
         self._persist_lesson_artifact(
-            lesson=lesson, user_id=query.user_id, session_id=query.session_id
+            lesson=lesson,
+            user_id=query.user_id,
+            session_id=query.session_id,
+            context=context,
         )
 
         return QueryResponse(lesson=lesson, context=context)
@@ -389,28 +392,35 @@ class RAGService:
         return artifacts
 
     def _persist_lesson_artifact(
-        self, lesson: LessonResponse, user_id: str, session_id: Optional[str]
+        self,
+        lesson: LessonResponse,
+        user_id: str,
+        session_id: Optional[str],
+        context: ContextAssembly,
     ) -> None:
         artifact_id = str(uuid.uuid4())
-        created_at = datetime.now(timezone.utc).isoformat()
-        content_for_embedding = " ".join(
-            [lesson.topic, lesson.explanation, " ".join(lesson.exercises)]
-        )
+        created_at = datetime.now(timezone.utc)
+
+        patterns_covered = [
+            p.get("pattern_id")
+            for p in context.detected_patterns
+            if p.get("pattern_id")
+        ]
+
+        pedagogy_tags = self._pedagogy_tags_for_lesson()
 
         artifact_payload = {
             "artifact_id": artifact_id,
             "user_id": user_id,
             "session_id": session_id or "",
-            "topic": lesson.topic,
-            "content": lesson.explanation,
-            "exercises": lesson.exercises,
-            "approach_type": lesson.approach_type,
-            "lesson_type": "lesson_response",
-            "created_at": created_at,
+            "patterns_covered": patterns_covered,
+            "pedagogy_tags": pedagogy_tags,
+            "created_at": created_at.isoformat(),
         }
 
         self.artifact_store.upsert(artifact_id, artifact_payload)
 
+        content_for_embedding = self._artifact_embedding_text(patterns_covered, pedagogy_tags)
         artifact_vector = self.embedder.embed_single(content_for_embedding)
         self.qdrant.upsert(
             collection_name="lesson_artifact_embeddings",
@@ -422,6 +432,16 @@ class RAGService:
                 }
             ],
         )
+
+    @staticmethod
+    def _pedagogy_tags_for_lesson() -> List[str]:
+        return ["error_explanation", "guided_practice"]
+
+    @staticmethod
+    def _artifact_embedding_text(patterns_covered: List[str], pedagogy_tags: List[str]) -> str:
+        patterns_text = ", ".join(patterns_covered) if patterns_covered else "no-specific-patterns"
+        tags_text = ", ".join(pedagogy_tags) if pedagogy_tags else "general"
+        return f"Taught patterns: {patterns_text}; pedagogy: {tags_text}."
 
     def _construct_lesson(
         self, context: ContextAssembly, user_id: str

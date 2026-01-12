@@ -1,12 +1,13 @@
-from datetime import datetime
-from typing import Optional
-from pydantic import BaseModel, Field
+from datetime import datetime, timezone
+from typing import Optional, List, Dict
+
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class UserText(BaseModel):
     text: str
     user_id: str
-    timestamp: datetime = Field(default_factory=datetime.now)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class MistakeInstance(BaseModel):
@@ -20,24 +21,29 @@ class MistakeInstance(BaseModel):
 class MistakePattern(BaseModel):
     pattern_id: str
     description: str
-    examples: list[str]
+    examples: List[str]
     user_id: str
-    created_at: datetime = Field(default_factory=datetime.now)
+    last_session_id: Optional[str] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class LearningSummary(BaseModel):
     summary_id: str
     user_id: str
     content: str
-    created_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class LessonArtifact(BaseModel):
-    artifact_id: str
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str = Field(alias="artifact_id")
     user_id: str
-    content: str
-    lesson_type: str
-    created_at: datetime = Field(default_factory=datetime.now)
+    session_id: Optional[str]
+    patterns_covered: List[str]
+    pedagogy_tags: List[str]
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class SessionContext(BaseModel):
@@ -66,9 +72,9 @@ class QueryRequest(BaseModel):
 
 
 class ContextAssembly(BaseModel):
-    detected_patterns: list[dict]
-    long_term_dynamics: list[dict]
-    recently_used_explanations: list[dict]
+    detected_patterns: List[Dict]
+    long_term_dynamics: List[Dict]
+    recently_used_explanations: List[Dict]
 
 
 class LessonResponse(BaseModel):

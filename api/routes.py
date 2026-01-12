@@ -1,17 +1,14 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
+
 from core.models import DocumentRequest, DocumentResponse, QueryRequest, QueryResponse
 from rag.service import RAGService
-from rag.embedder import Embedder
-from vectorstore.qdrant_client import QdrantStore
-
-
-def get_rag_service() -> RAGService:
-    qdrant_store = QdrantStore()
-    embedder = Embedder()
-    return RAGService(qdrant_store, embedder)
 
 
 router = APIRouter()
+
+
+def get_rag_service(request: Request) -> RAGService:
+    return request.app.state.rag_service
 
 
 @router.post("/documents", response_model=DocumentResponse)
