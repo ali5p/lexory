@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Protocol
 
 from core.models import (
     ContextAssembly,
@@ -94,6 +94,11 @@ class RAGService:
         self.min_similarity_score = 0.5
         self.pattern_similarity_threshold = 0.65
         self.max_examples_per_pattern = 3
+        self._approach_registry: Dict[str, BaseApproach] = {
+            "rule_based": RuleBasedApproach(),
+            "example_based": ExampleBasedApproach(),
+            "default": DefaultApproach(),
+        }
 
     def ingest_user_text(
         self, user_text: UserText, session_id: Optional[str] = None
@@ -461,8 +466,9 @@ class RAGService:
 
         topic = self._extract_topic(primary_pattern, primary_summary)
         approach_type = self._select_approach_type(used_approach_types)
-        explanation = self._build_explanation(context, topic, approach_type)
-        exercises = self._generate_exercises(primary_pattern, approach_type)
+        handler = self._get_approach_handler(approach_type)
+        explanation = handler.build_explanation(context, topic)
+        exercises = handler.generate_exercises(primary_pattern)
 
         return LessonResponse(
             topic=topic,
@@ -501,40 +507,50 @@ class RAGService:
 
         return available_types[0]
 
-    def _build_explanation(
-        self, context: ContextAssembly, topic: str, approach_type: str
-    ) -> str:
-        parts = []
+    def _get_approach_handler(self, approach_type: str) -> "BaseApproach":
+        return self._approach_registry.get(approach_type, self._approach_registry["default"])
 
+
+class BaseApproach(Protocol):
+    def build_explanation(self, context: ContextAssembly, topic: str) -> str: ...
+
+    def generate_exercises(self, primary_pattern: Optional[dict]) -> List[str]: ...
+
+
+class RuleBasedApproach:
+    def build_explanation(self, context: ContextAssembly, topic: str) -> str:
+        # Uses explicit pattern description and long-term context; matches prior behavior.
+        parts: List[str] = []
         if context.detected_patterns:
             pattern_desc = context.detected_patterns[0].get("description", "")
             if pattern_desc:
                 parts.append(f"Pattern: {pattern_desc}")
-
         if context.long_term_dynamics:
             summary_content = context.long_term_dynamics[0].get("content", "")
             if summary_content:
                 parts.append(f"Context: {summary_content[:200]}")
-
         if not parts:
             parts.append(f"Topic: {topic}")
+        return " ".join(parts)[:500]
 
-        explanation = " ".join(parts)
-        return explanation[:500]
-
-    def _generate_exercises(
-        self, primary_pattern: Optional[dict], approach_type: str
-    ) -> List[str]:
-        exercises = []
-
+    def generate_exercises(self, primary_pattern: Optional[dict]) -> List[str]:
+        exercises: List[str] = []
         if primary_pattern:
             examples = primary_pattern.get("examples", [])
             if examples:
                 for example in examples[:2]:
                     exercises.append(f"Practice: {example}")
-
         if not exercises:
             exercises.append("Complete the sentence with the correct form.")
             exercises.append("Identify and correct the mistake in the given text.")
-
         return exercises[:3]
+
+
+class ExampleBasedApproach(RuleBasedApproach):
+    # Same behavior for now; differentiation can be added without touching orchestrator.
+    pass
+
+
+class DefaultApproach(RuleBasedApproach):
+    # Fallback uses the same safe defaults.
+    pass
