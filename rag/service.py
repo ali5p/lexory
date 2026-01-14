@@ -422,6 +422,9 @@ class RAGService:
             "artifact_id": artifact_id,
             "user_id": user_id,
             "session_id": session_id or "",
+            "content": lesson.explanation,
+            "lesson_type": lesson.topic,
+            "approach_type": lesson.approach_type,
             "patterns_covered": patterns_covered,
             "pedagogy_tags": pedagogy_tags,
             "created_at": created_at.isoformat(),
@@ -429,7 +432,12 @@ class RAGService:
 
         self.artifact_store.upsert(artifact_id, artifact_payload)
 
-        content_for_embedding = self._artifact_embedding_text(patterns_covered, pedagogy_tags)
+        content_for_embedding = self._artifact_embedding_text(
+            lesson=lesson,
+            patterns_covered=patterns_covered,
+            pedagogy_tags=pedagogy_tags,
+        )
+        
         artifact_vector = self.embedder.embed_single(content_for_embedding)
         self.qdrant.upsert(
             collection_name="lesson_artifact_embeddings",
@@ -447,13 +455,24 @@ class RAGService:
         return ["error_explanation", "guided_practice"]
 
     @staticmethod
-    def _artifact_embedding_text(patterns_covered: List[str], pedagogy_tags: List[str]) -> str:
+    def _artifact_embedding_text(
+        lesson: LessonResponse,
+        patterns_covered: List[str],
+        pedagogy_tags: List[str],
+    ) -> str:
         patterns_text = ", ".join(patterns_covered) if patterns_covered else "no-specific-patterns"
         tags_text = ", ".join(pedagogy_tags) if pedagogy_tags else "general"
-        return f"Taught patterns: {patterns_text}; pedagogy: {tags_text}."
+
+        return (
+            f"Lesson topic: {lesson.topic}. "
+            f"Explanation: {lesson.explanation}. "
+            f"Taught patterns: {patterns_text}. "
+            f"Pedagogy: {tags_text}."
+        )
+
 
     def _construct_lesson(
-        self, context: ContextAssembly, user_id: str
+        self, context: ContextAssembly, user_id: str  # reserved for personalization
     ) -> LessonResponse:
         used_approach_types = {
             artifact.get("approach_type", "")
