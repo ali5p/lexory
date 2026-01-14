@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Set, Protocol
+from typing import Dict, List, Optional, Set
 
 from core.models import (
     ContextAssembly,
@@ -9,6 +9,10 @@ from core.models import (
     QueryResponse,
     UserText,
 )
+from rag.approaches.base import BaseApproach
+from rag.approaches.default import DefaultApproach
+from rag.approaches.example_based import ExampleBasedApproach
+from rag.approaches.rule_based import RuleBasedApproach
 from rag.embedder import Embedder
 from vectorstore.qdrant_client import QdrantStore
 
@@ -507,50 +511,5 @@ class RAGService:
 
         return available_types[0]
 
-    def _get_approach_handler(self, approach_type: str) -> "BaseApproach":
+    def _get_approach_handler(self, approach_type: str) -> BaseApproach:
         return self._approach_registry.get(approach_type, self._approach_registry["default"])
-
-
-class BaseApproach(Protocol):
-    def build_explanation(self, context: ContextAssembly, topic: str) -> str: ...
-
-    def generate_exercises(self, primary_pattern: Optional[dict]) -> List[str]: ...
-
-
-class RuleBasedApproach:
-    def build_explanation(self, context: ContextAssembly, topic: str) -> str:
-        # Uses explicit pattern description and long-term context; matches prior behavior.
-        parts: List[str] = []
-        if context.detected_patterns:
-            pattern_desc = context.detected_patterns[0].get("description", "")
-            if pattern_desc:
-                parts.append(f"Pattern: {pattern_desc}")
-        if context.long_term_dynamics:
-            summary_content = context.long_term_dynamics[0].get("content", "")
-            if summary_content:
-                parts.append(f"Context: {summary_content[:200]}")
-        if not parts:
-            parts.append(f"Topic: {topic}")
-        return " ".join(parts)[:500]
-
-    def generate_exercises(self, primary_pattern: Optional[dict]) -> List[str]:
-        exercises: List[str] = []
-        if primary_pattern:
-            examples = primary_pattern.get("examples", [])
-            if examples:
-                for example in examples[:2]:
-                    exercises.append(f"Practice: {example}")
-        if not exercises:
-            exercises.append("Complete the sentence with the correct form.")
-            exercises.append("Identify and correct the mistake in the given text.")
-        return exercises[:3]
-
-
-class ExampleBasedApproach(RuleBasedApproach):
-    # Same behavior for now; differentiation can be added without touching orchestrator.
-    pass
-
-
-class DefaultApproach(RuleBasedApproach):
-    # Fallback uses the same safe defaults.
-    pass
