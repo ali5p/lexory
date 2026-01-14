@@ -204,15 +204,20 @@ class RAGService:
         return self.embedder.embed_single(combined)
 
     def _ensure_patterns_for_session(self, user_id: str, session_id: Optional[str]) -> None:
-        existing = self.pattern_store.get_by_user_session(user_id, session_id)
-        if existing:
-            return
-
         session_texts = self.text_store.get_by_user_session(user_id, session_id)
-        if not session_texts:
+        candidate_texts: List[str] = []
+
+        if session_texts:
+            candidate_texts = [t["text"] for t in session_texts]
+        else:
+            # Fallback to recent user texts to keep semantics global, not session-gated.
+            candidate_texts = [t["text"] for t in self.text_store.get_by_user(user_id)]
+
+        if not candidate_texts:
             return
 
-        cluster_texts = [t["text"] for t in session_texts][: self.max_context_items]
+        cluster_texts = candidate_texts[: self.max_context_items]
+        # Semantic creation/reuse happens inside; pattern_id reuse is driven by similarity in Qdrant.
         self._create_or_update_mistake_pattern(cluster_texts, user_id, session_id)
 
     def _create_or_update_mistake_pattern_from_text(
@@ -437,7 +442,7 @@ class RAGService:
             patterns_covered=patterns_covered,
             pedagogy_tags=pedagogy_tags,
         )
-        
+
         artifact_vector = self.embedder.embed_single(content_for_embedding)
         self.qdrant.upsert(
             collection_name="lesson_artifact_embeddings",
@@ -483,6 +488,8 @@ class RAGService:
         primary_pattern = (
             context.detected_patterns[0] if context.detected_patterns else None
         )
+
+        # TODO: add long term dynamics
         primary_summary = (
             context.long_term_dynamics[0] if context.long_term_dynamics else None
         )
