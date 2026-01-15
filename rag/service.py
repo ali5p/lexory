@@ -275,17 +275,31 @@ class RAGService:
             filter_dict={"user_id": user_id},
         )
 
+        canonical_description = unique_texts[0][:120]
+        pattern_id = None
+
         if existing and existing[0]["score"] >= self.pattern_similarity_threshold:
             pattern_id = existing[0]["payload"].get("pattern_id", existing[0]["id"])
-        else:
+
+        if pattern_id is None:
+            for pattern in self.pattern_store.patterns.values():
+                if (
+                    pattern.get("user_id") == user_id
+                    and pattern.get("canonical_description") == canonical_description
+                ):
+                    pattern_id = pattern.get("pattern_id")
+                    break
+
+        if pattern_id is None:
             pattern_id = str(uuid.uuid4())
 
-        description = f"Recurring mistake: {unique_texts[0][:120]}"
+        description = f"Recurring mistake: {canonical_description}"
         examples = unique_texts[: self.max_examples_per_pattern]
         updated_at = datetime.now(timezone.utc).isoformat()
 
         pattern_payload = {
             "pattern_id": pattern_id,
+            "canonical_description": canonical_description,
             "description": description,
             "examples": examples,
             "user_id": user_id,
