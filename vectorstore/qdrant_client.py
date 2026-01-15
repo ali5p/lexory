@@ -47,26 +47,45 @@ class QdrantStore:
     def search(
         self,
         collection_name: str,
-        query_vector: list[float],
+        vector: list[float],
         limit: int = 5,
-        filter_dict: Optional[dict] = None,
+        filters: Optional[dict] = None,
     ) -> list[dict]:
-        from qdrant_client.models import Filter, FieldCondition, Match
+        # Qdrant expects a Filter object; we map simple dicts to keep callers minimal.
+        from qdrant_client.models import Filter, FieldCondition, MatchValue
 
         query_filter = None
-        if filter_dict:
+        if filters:
             conditions = []
-            for key, value in filter_dict.items():
-                conditions.append(FieldCondition(key=key, match=Match(value=value)))
+            for key, value in filters.items():
+                conditions.append(FieldCondition(key=key, match=MatchValue(value=value)))
             if conditions:
                 query_filter = Filter(must=conditions)
 
-        results = self.client.search(
-            collection_name=collection_name,
-            query_vector=query_vector,
-            limit=limit,
-            query_filter=query_filter,
-        )
+        # Local Qdrant client versions vary; support both search() and search_points().
+        if hasattr(self.client, "search"):
+            results = self.client.search(
+                collection_name=collection_name,
+                query_vector=vector,
+                limit=limit,
+                query_filter=query_filter,
+            )
+        else:
+            try:
+                results = self.client.search_points(
+                    collection_name=collection_name,
+                    query_vector=vector,
+                    limit=limit,
+                    query_filter=query_filter,
+                )
+            except TypeError:
+                # Older signature uses "vector" instead of "query_vector".
+                results = self.client.search_points(
+                    collection_name=collection_name,
+                    vector=vector,
+                    limit=limit,
+                    query_filter=query_filter,
+                )
 
         return [
             {

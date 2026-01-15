@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 .vscode/
 .ruff_cache/
+qdrant_storage/

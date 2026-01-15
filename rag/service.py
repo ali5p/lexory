@@ -229,9 +229,9 @@ class RAGService:
     ) -> None:
         similar_results = self.qdrant.search(
             collection_name="user_text_embeddings",
-            query_vector=embedding,
+            vector=embedding,
             limit=5,
-            filter_dict={"user_id": user_text.user_id},
+            filters={"user_id": user_text.user_id},
         )
 
         cluster_texts = [user_text.text]
@@ -270,9 +270,9 @@ class RAGService:
 
         existing = self.qdrant.search(
             collection_name="mistake_pattern_embeddings",
-            query_vector=pattern_vector,
+            vector=pattern_vector,
             limit=1,
-            filter_dict={"user_id": user_id},
+            filters={"user_id": user_id},
         )
 
         canonical_description = unique_texts[0][:120]
@@ -341,9 +341,9 @@ class RAGService:
     ) -> List[dict]:
         results = self.qdrant.search(
             collection_name="mistake_pattern_embeddings",
-            query_vector=query_embedding,
+            vector=query_embedding,
             limit=5,
-            filter_dict=user_filter,
+            filters=user_filter,
         )
 
         patterns = []
@@ -384,9 +384,9 @@ class RAGService:
     ) -> List[dict]:
         results = self.qdrant.search(
             collection_name="lesson_artifact_embeddings",
-            query_vector=query_embedding,
+            vector=query_embedding,
             limit=10,
-            filter_dict=user_filter,
+            filters=user_filter,
         )
 
         artifacts = []
