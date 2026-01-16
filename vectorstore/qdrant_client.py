@@ -1,14 +1,19 @@
 from pathlib import Path
-from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams
 from typing import Optional
+
+from qdrant_client import QdrantClient
+from qdrant_client.local.qdrant_local import QdrantLocal
+from qdrant_client.models import Distance, VectorParams, Filter, FieldCondition, MatchValue, PointStruct
 
 
 class QdrantStore:
-    def __init__(self, path: str = "./qdrant_storage", port: int = 6333):
+    def __init__(self, path: str = "./qdrant_storage", url: str | None = None):
         self.path = Path(path)
         self.path.mkdir(exist_ok=True)
-        self.client = QdrantClient(path=str(self.path))
+        if url:
+            self.client = QdrantClient(url=url)
+        else:
+            self.client = QdrantLocal(str(self.path))
         self._ensure_collections()
 
     def _ensure_collections(self):
@@ -27,13 +32,7 @@ class QdrantStore:
                     vectors_config=VectorParams(size=384, distance=Distance.COSINE),
                 )
 
-    def upsert(
-        self,
-        collection_name: str,
-        points: list[dict],
-    ):
-        from qdrant_client.models import PointStruct
-
+    def upsert(self, collection_name: str, points: list[dict]):
         points_struct = [
             PointStruct(
                 id=point["id"],
@@ -52,8 +51,6 @@ class QdrantStore:
         filters: Optional[dict] = None,
     ) -> list[dict]:
         # Qdrant expects a Filter object; we map simple dicts to keep callers minimal.
-        from qdrant_client.models import Filter, FieldCondition, MatchValue
-
         query_filter = None
         if filters:
             conditions = []
@@ -62,30 +59,12 @@ class QdrantStore:
             if conditions:
                 query_filter = Filter(must=conditions)
 
-        # Local Qdrant client versions vary; support both search() and search_points().
-        if hasattr(self.client, "search"):
-            results = self.client.search(
-                collection_name=collection_name,
-                query_vector=vector,
-                limit=limit,
-                query_filter=query_filter,
-            )
-        else:
-            try:
-                results = self.client.search_points(
-                    collection_name=collection_name,
-                    query_vector=vector,
-                    limit=limit,
-                    query_filter=query_filter,
-                )
-            except TypeError:
-                # Older signature uses "vector" instead of "query_vector".
-                results = self.client.search_points(
-                    collection_name=collection_name,
-                    vector=vector,
-                    limit=limit,
-                    query_filter=query_filter,
-                )
+        results = self.client.search(
+            collection_name=collection_name,
+            query_vector=vector,
+            limit=limit,
+            query_filter=query_filter,
+        )
 
         return [
             {
