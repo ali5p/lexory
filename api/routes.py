@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Request
 
-from core.models import DocumentRequest, DocumentResponse, QueryRequest, QueryResponse
+from core.models import DocumentRequest, DocumentResponse, QueryRequest, QueryResponse, ExerciseAttempt
 from rag.service import RAGService
 
 
@@ -36,3 +36,10 @@ async def query_lesson(
     response = rag_service.generate_lesson(request)
     return response
 
+
+@router.post("/exercise-feedback")
+async def submit_exercise(
+    request: ExerciseAttempt,
+    rag_service: RAGService = Depends(get_rag_service),
+):
+    return rag_service.process_exercise_attempt(request)

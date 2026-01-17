@@ -88,3 +88,10 @@ class QueryResponse(BaseModel):
     lesson: LessonResponse
     context: ContextAssembly
 
+
+class ExerciseAttempt(BaseModel):
+    text: str
+    user_id: str
+    target_pattern_id: Optional[str] = None
+    lesson_artifact_id: Optional[str] = None
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

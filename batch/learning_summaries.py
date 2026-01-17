@@ -218,6 +218,9 @@ class LearningSummaryBatch:
             .join(patterns, left_on="pattern_id", right_on="id", how="left", suffix="_pattern")
         )
 
+        # Critical: exclude controlled exercise attempts from trend learning
+        base = base.filter(pl.col("source") != "exercise")
+
         return base.select(
             "user_id",
             "session_id",

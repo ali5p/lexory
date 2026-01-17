@@ -4,6 +4,7 @@ from typing import Dict, List, Optional, Set
 
 from core.models import (
     ContextAssembly,
+    ExerciseAttempt,
     LessonResponse,
     QueryRequest,
     QueryResponse,
@@ -94,6 +95,7 @@ class RAGService:
         self.text_store = InMemoryTextStore()
         self.pattern_store = InMemoryPatternStore()
         self.artifact_store = InMemoryArtifactStore()
+        self.mistake_occurrences: List[dict] = []
         self.max_context_items = 10
         self.min_similarity_score = 0.5
         self.pattern_similarity_threshold = 0.65
@@ -166,6 +168,100 @@ class RAGService:
 
         return QueryResponse(lesson=lesson, context=context)
 
+    def process_exercise_attempt(self, attempt: ExerciseAttempt) -> dict:
+        exercise_attempt_id = str(uuid.uuid4())
+        attempt_vector = self.embedder.embed_single(attempt.text)
+
+        candidate_pattern_ids = self._candidate_patterns_for_exercise(attempt)
+        detected_pattern = self._detect_exercise_pattern(
+            attempt_vector=attempt_vector,
+            user_id=attempt.user_id,
+            candidate_pattern_ids=candidate_pattern_ids,
+        )
+
+        is_correct = detected_pattern is None
+        feedback = self._exercise_feedback(detected_pattern)
+
+        self.mistake_occurrences.append(
+            {
+                "pattern_id": detected_pattern.get("pattern_id") if detected_pattern else None,
+                "user_text_id": exercise_attempt_id,
+                "detected_at": datetime.now(timezone.utc).isoformat(),
+                "source": "exercise",
+            }
+        )
+
+        self.qdrant.upsert(
+            collection_name="user_text_embeddings",
+            points=[
+                {
+                    "id": exercise_attempt_id,
+                    "vector": attempt_vector,
+                    "payload": {
+                        "user_id": attempt.user_id,
+                        "text": attempt.text,
+                        "source": "exercise",
+                        "confidence": 0.3,
+                    },
+                }
+            ],
+        )
+
+        return {
+            "exercise_attempt_id": exercise_attempt_id,
+            "detected_pattern_id": detected_pattern.get("pattern_id") if detected_pattern else None,
+            "is_correct": is_correct,
+            "feedback": feedback,
+        }
+
+    def _candidate_patterns_for_exercise(self, attempt: ExerciseAttempt) -> List[str]:
+        if attempt.target_pattern_id:
+            return [attempt.target_pattern_id]
+
+        recent_patterns = self.pattern_store.get_by_user_session(attempt.user_id, None)
+        return [p["pattern_id"] for p in recent_patterns if p.get("pattern_id")]
+
+    def _detect_exercise_pattern(
+        self,
+        attempt_vector: List[float],
+        user_id: str,
+        candidate_pattern_ids: List[str],
+    ) -> Optional[dict]:
+        if not candidate_pattern_ids:
+            return None
+
+        filters = {"user_id": user_id}
+        if len(candidate_pattern_ids) == 1:
+            filters["pattern_id"] = candidate_pattern_ids[0]
+
+        results = self.qdrant.search(
+            collection_name="mistake_pattern_embeddings",
+            vector=attempt_vector,
+            limit=5,
+            filters=filters,
+        )
+
+        for result in results:
+            if result["score"] < self.pattern_similarity_threshold:
+                continue
+            payload = result.get("payload", {})
+            pattern_id = payload.get("pattern_id")
+            if candidate_pattern_ids and pattern_id not in candidate_pattern_ids:
+                continue
+            return {
+                "pattern_id": pattern_id,
+                "description": payload.get("description", ""),
+            }
+
+        return None
+
+    @staticmethod
+    def _exercise_feedback(detected_pattern: Optional[dict]) -> str:
+        if not detected_pattern:
+            return "Looks correct. Keep going."
+        description = detected_pattern.get("description", "this pattern")
+        return f"Possible issue with {description}. Try correcting the form."
+
     def _build_query_embedding(
         self, user_id: str, session_id: Optional[str], fallback_query: Optional[str]
     ) -> List[float]:
@@ -177,7 +273,9 @@ class RAGService:
         ]
 
         session_texts = [
-            t["text"] for t in self.text_store.get_by_user_session(user_id, session_id)
+            t["text"]
+            for t in self.text_store.get_by_user_session(user_id, session_id)
+            if t.get("source") != "exercise"
         ]
 
         if pattern_descriptions:
@@ -239,6 +337,8 @@ class RAGService:
             if result["score"] < self.pattern_similarity_threshold:
                 continue
             payload = result.get("payload", {})
+            if payload.get("source") == "exercise":
+                continue
             if payload.get("user_text_id") == user_text_id:
                 continue
             candidate_text = payload.get("text")
