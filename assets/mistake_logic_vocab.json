@@ -1,0 +1,25 @@
+{
+  "categories": [
+    "word_order",
+    "subject_verb_agreement",
+    "missing_article",
+    "wrong_article",
+    "preposition_error",
+    "tense_error",
+    "plural_error",
+    "punctuation_error",
+    "spelling_error",
+    "capitalization_error",
+    "conjunction_error",
+    "pronoun_error",
+    "adjective_order",
+    "adverb_placement",
+    "passive_voice",
+    "conditional_error",
+    "modal_verb_error",
+    "gerund_infinitive",
+    "comparative_superlative",
+    "relative_clause",
+    "other"
+  ]
+}

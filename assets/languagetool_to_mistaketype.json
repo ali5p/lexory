@@ -1,0 +1,22 @@
+{
+  "ENGLISH_WORD_ORDER": "word_order",
+  "SUBJECT_VERB_AGREEMENT": "subject_verb_agreement",
+  "MISSING_ARTICLE": "missing_article",
+  "WRONG_ARTICLE": "wrong_article",
+  "PREPOSITION_ERROR": "preposition_error",
+  "TENSE_ERROR": "tense_error",
+  "PLURAL_ERROR": "plural_error",
+  "PUNCTUATION_ERROR": "punctuation_error",
+  "SPELLING_ERROR": "spelling_error",
+  "CAPITALIZATION_ERROR": "capitalization_error",
+  "CONJUNCTION_ERROR": "conjunction_error",
+  "PRONOUN_ERROR": "pronoun_error",
+  "ADJECTIVE_ORDER": "adjective_order",
+  "ADVERB_PLACEMENT": "adverb_placement",
+  "PASSIVE_VOICE": "passive_voice",
+  "CONDITIONAL_ERROR": "conditional_error",
+  "MODAL_VERB_ERROR": "modal_verb_error",
+  "GERUND_INFINITIVE": "gerund_infinitive",
+  "COMPARATIVE_SUPERLATIVE": "comparative_superlative",
+  "RELATIVE_CLAUSE": "relative_clause"
+}

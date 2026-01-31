@@ -15,6 +15,7 @@ from rag.approaches.default import DefaultApproach
 from rag.approaches.example_based import ExampleBasedApproach
 from rag.approaches.rule_based import RuleBasedApproach
 from rag.embedder import Embedder
+from rag.pipelines.languagetool_pipeline import process_text
 from vectorstore.qdrant_client import QdrantStore
 
 
@@ -88,6 +89,16 @@ class InMemoryArtifactStore:  # TODO replace with SQL storage
         return [a for a in self.artifacts.values() if a["user_id"] == user_id]
 
 
+class InMemoryOccurrenceStore:  # TODO replace with SQL storage
+    """Stores mistake occurrences (authoritative)."""
+
+    def __init__(self):
+        self.occurrences: List[dict] = []
+
+    def insert(self, occurrence: dict):
+        self.occurrences.append(occurrence)
+
+
 class RAGService:
     def __init__(self, qdrant_store: QdrantStore, embedder: Embedder):
         self.qdrant = qdrant_store
@@ -95,10 +106,12 @@ class RAGService:
         self.text_store = InMemoryTextStore()
         self.pattern_store = InMemoryPatternStore()
         self.artifact_store = InMemoryArtifactStore()
+        self.occurrence_store = InMemoryOccurrenceStore()
         self.mistake_occurrences: List[dict] = []
         self.max_context_items = 10
         self.min_similarity_score = 0.5
         self.pattern_similarity_threshold = 0.65
+        self.semantic_dedup_threshold = 0.98
         self.max_examples_per_pattern = 3
         self._approach_registry: Dict[str, BaseApproach] = {
             "rule_based": RuleBasedApproach(),
@@ -134,10 +147,44 @@ class RAGService:
                         "user_id": user_text.user_id,
                         "session_id": session_id or "",
                         "timestamp": user_text.timestamp.isoformat(),
+                        "source": "raw_text",
                     },
                 }
             ],
         )
+
+        # Process through LanguageTool pipeline
+        try:
+            events = process_text(
+                text=user_text.text,
+                user_id=user_text.user_id,
+                session_id=session_id,
+                embedder=self.embedder,
+                source="raw_text",
+            )
+            
+            # Batch process all events
+            example_points = []
+            occurrence_points = []
+            
+            for event in events:
+                example_point, occurrence_point = self._ingest_mistake_event(
+                    event=event,
+                    user_text_id=user_text_id,
+                )
+                if example_point:
+                    example_points.append(example_point)
+                if occurrence_point:
+                    occurrence_points.append(occurrence_point)
+            
+            # Batch upsert to Qdrant
+            if example_points:
+                self.qdrant.upsert("mistake_examples", example_points)
+            if occurrence_points:
+                self.qdrant.upsert("mistake_occurrences", occurrence_points)
+        except ImportError:
+            # LanguageTool not available, fall back to old pattern creation
+            pass
 
         self._create_or_update_mistake_pattern_from_text(
             user_text=user_text,
@@ -147,6 +194,141 @@ class RAGService:
         )
 
         return document_id, user_text_id
+
+    def _ingest_mistake_event(
+        self, event: dict, user_text_id: str
+    ) -> tuple[Optional[dict], Optional[dict]]:
+        """
+        Deduplication workflow for mistake events.
+        
+        Returns:
+            (example_point, occurrence_point) - either can be None
+        """
+        mistake_type = event["mistake_type"]
+        context_vector = event["context_vector"]
+        mistake_logic_vector = event["mistake_logic_vector"]
+        
+        # Stage 1: Category check - does this mistake_type exist?
+        # Use a dummy vector since Qdrant requires a vector for search
+        dummy_vector = [0.0] * 64
+        existing_examples = self.qdrant.search(
+            collection_name="mistake_examples",
+            vector=None,
+            limit=1,
+            filters={"mistake_type": mistake_type},
+            named_query={"vector_name": "mistake_logic", "vector": dummy_vector},
+        )
+        
+        if not existing_examples:
+            # No examples for this mistake_type - create both example and occurrence
+            example_id = str(uuid.uuid4())
+            example_point = {
+                "id": example_id,
+                "vectors": {
+                    "mistake_logic": mistake_logic_vector,
+                    "context": context_vector,
+                },
+                "payload": {
+                    **{k: v for k, v in event.items() if k not in ["mistake_logic_vector", "context_vector"]},
+                    "canonical_example": event["text"],
+                },
+            }
+            
+            occurrence_point = {
+                "id": event["mistake_id"],
+                "vectors": {
+                    "mistake_logic": mistake_logic_vector,
+                },
+                "payload": {
+                    **{k: v for k, v in event.items() if k not in ["mistake_logic_vector", "context_vector"]},
+                },
+            }
+            
+            # Persist occurrence to SQL placeholder
+            self.occurrence_store.insert({
+                "pattern_id": None,
+                "mistake_id": event["mistake_id"],
+                "user_text_id": user_text_id,
+                "detected_at": event["timestamp"],
+                "source": event["source"],
+                "mistake_type": mistake_type,
+                "rule_id": event["rule_id"],
+            })
+            
+            return example_point, occurrence_point
+        
+        # Stage 2: Semantic deduplication
+        # Search by context vector with mistake_type filter
+        similar_examples = self.qdrant.search(
+            collection_name="mistake_examples",
+            vector=None,
+            limit=5,
+            filters={"mistake_type": mistake_type},
+            named_query={
+                "vector_name": "context",
+                "vector": context_vector,
+            },
+        )
+        
+        if similar_examples and similar_examples[0]["score"] > self.semantic_dedup_threshold:
+            # High similarity - only create occurrence, not new example
+            occurrence_point = {
+                "id": event["mistake_id"],
+                "vectors": {
+                    "mistake_logic": mistake_logic_vector,
+                },
+                "payload": {
+                    **{k: v for k, v in event.items() if k not in ["mistake_logic_vector", "context_vector"]},
+                },
+            }
+            
+            self.occurrence_store.insert({
+                "pattern_id": None,
+                "mistake_id": event["mistake_id"],
+                "user_text_id": user_text_id,
+                "detected_at": event["timestamp"],
+                "source": event["source"],
+                "mistake_type": mistake_type,
+                "rule_id": event["rule_id"],
+            })
+            
+            return None, occurrence_point
+        
+        # Low similarity or no results - create new example + occurrence
+        example_id = str(uuid.uuid4())
+        example_point = {
+            "id": example_id,
+            "vectors": {
+                "mistake_logic": mistake_logic_vector,
+                "context": context_vector,
+            },
+            "payload": {
+                **{k: v for k, v in event.items() if k not in ["mistake_logic_vector", "context_vector"]},
+                "canonical_example": event["text"],
+            },
+        }
+        
+        occurrence_point = {
+            "id": event["mistake_id"],
+            "vectors": {
+                "mistake_logic": mistake_logic_vector,
+            },
+            "payload": {
+                **{k: v for k, v in event.items() if k not in ["mistake_logic_vector", "context_vector"]},
+            },
+        }
+        
+        self.occurrence_store.insert({
+            "pattern_id": None,
+            "mistake_id": event["mistake_id"],
+            "user_text_id": user_text_id,
+            "detected_at": event["timestamp"],
+            "source": event["source"],
+            "mistake_type": mistake_type,
+            "rule_id": event["rule_id"],
+        })
+        
+        return example_point, occurrence_point
 
     def generate_lesson(self, query: QueryRequest) -> QueryResponse:
         self._ensure_patterns_for_session(query.user_id, query.session_id)
@@ -170,49 +352,106 @@ class RAGService:
 
     def process_exercise_attempt(self, attempt: ExerciseAttempt) -> dict:
         exercise_attempt_id = str(uuid.uuid4())
-        attempt_vector = self.embedder.embed_single(attempt.text)
-
-        candidate_pattern_ids = self._candidate_patterns_for_exercise(attempt)
-        detected_pattern = self._detect_exercise_pattern(
-            attempt_vector=attempt_vector,
-            user_id=attempt.user_id,
-            candidate_pattern_ids=candidate_pattern_ids,
-        )
-
-        is_correct = detected_pattern is None
-        feedback = self._exercise_feedback(detected_pattern)
-
-        self.mistake_occurrences.append(
-            {
-                "pattern_id": detected_pattern.get("pattern_id") if detected_pattern else None,
-                "user_text_id": exercise_attempt_id,
-                "detected_at": datetime.now(timezone.utc).isoformat(),
-                "source": "exercise",
+        
+        # Process through LanguageTool pipeline
+        try:
+            events = process_text(
+                text=attempt.text,
+                user_id=attempt.user_id,
+                session_id=None,
+                embedder=self.embedder,
+                source="exercise_attempt",
+            )
+            
+            is_correct = len(events) == 0
+            detected_pattern_id = None
+            
+            if events:
+                # Use first detected mistake for feedback
+                first_event = events[0]
+                detected_pattern_id = first_event.get("mistake_id")
+                feedback = self._exercise_feedback_from_event(first_event)
+                
+                # Process all events through deduplication
+                example_points = []
+                occurrence_points = []
+                
+                for event in events:
+                    example_point, occurrence_point = self._ingest_mistake_event(
+                        event=event,
+                        user_text_id=exercise_attempt_id,
+                    )
+                    if example_point:
+                        example_points.append(example_point)
+                    if occurrence_point:
+                        occurrence_points.append(occurrence_point)
+                
+                if example_points:
+                    self.qdrant.upsert("mistake_examples", example_points)
+                if occurrence_points:
+                    self.qdrant.upsert("mistake_occurrences", occurrence_points)
+            else:
+                feedback = "Looks correct. Keep going."
+            
+            # Store exercise attempt in user_text_embeddings (weak signal)
+            attempt_vector = self.embedder.embed_single(attempt.text)
+            self.qdrant.upsert(
+                collection_name="user_text_embeddings",
+                points=[
+                    {
+                        "id": exercise_attempt_id,
+                        "vector": attempt_vector,
+                        "payload": {
+                            "user_id": attempt.user_id,
+                            "text": attempt.text,
+                            "source": "exercise_attempt",
+                            "confidence": 0.3,
+                        },
+                    }
+                ],
+            )
+            
+            return {
+                "exercise_attempt_id": exercise_attempt_id,
+                "detected_pattern_id": detected_pattern_id,
+                "is_correct": is_correct,
+                "feedback": feedback,
             }
-        )
-
-        self.qdrant.upsert(
-            collection_name="user_text_embeddings",
-            points=[
-                {
-                    "id": exercise_attempt_id,
-                    "vector": attempt_vector,
-                    "payload": {
-                        "user_id": attempt.user_id,
-                        "text": attempt.text,
-                        "source": "exercise",
-                        "confidence": 0.3,
-                    },
-                }
-            ],
-        )
-
-        return {
-            "exercise_attempt_id": exercise_attempt_id,
-            "detected_pattern_id": detected_pattern.get("pattern_id") if detected_pattern else None,
-            "is_correct": is_correct,
-            "feedback": feedback,
-        }
+        except ImportError:
+            # Fallback if LanguageTool not available
+            attempt_vector = self.embedder.embed_single(attempt.text)
+            candidate_pattern_ids = self._candidate_patterns_for_exercise(attempt)
+            detected_pattern = self._detect_exercise_pattern(
+                attempt_vector=attempt_vector,
+                user_id=attempt.user_id,
+                candidate_pattern_ids=candidate_pattern_ids,
+            )
+            
+            is_correct = detected_pattern is None
+            feedback = self._exercise_feedback(detected_pattern)
+            
+            self.qdrant.upsert(
+                collection_name="user_text_embeddings",
+                points=[
+                    {
+                        "id": exercise_attempt_id,
+                        "vector": attempt_vector,
+                        "payload": {
+                            "user_id": attempt.user_id,
+                            "text": attempt.text,
+                            "source": "exercise_attempt",
+                            "confidence": 0.3,
+                        },
+                    }
+                ],
+            )
+            
+            return {
+                "exercise_attempt_id": exercise_attempt_id,
+                "detected_pattern_id": detected_pattern.get("pattern_id") if detected_pattern else None,
+                "is_correct": is_correct,
+                "feedback": feedback,
+            }
 
     def _candidate_patterns_for_exercise(self, attempt: ExerciseAttempt) -> List[str]:
         if attempt.target_pattern_id:
@@ -261,6 +500,12 @@ class RAGService:
             return "Looks correct. Keep going."
         description = detected_pattern.get("description", "this pattern")
         return f"Possible issue with {description}. Try correcting the form."
+    
+    @staticmethod
+    def _exercise_feedback_from_event(event: dict) -> str:
+        """Generate feedback from LanguageTool event."""
+        mistake_type = event.get("mistake_type", "error")
+        return f"Detected {mistake_type} mistake. Review the sentence structure."
 
     def _build_query_embedding(
         self, user_id: str, session_id: Optional[str], fallback_query: Optional[str]
