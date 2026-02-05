@@ -2,6 +2,11 @@ import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set
 
+try:
+    from language_tool_python import LanguageTool
+except ImportError:
+    LanguageTool = None
+
 from core.models import (
     ContextAssembly,
     ExerciseAttempt,
@@ -118,6 +123,15 @@ class RAGService:
             "example_based": ExampleBasedApproach(),
             "default": DefaultApproach(),
         }
+        # Initialize LanguageTool singleton (process-lifetime)
+        if LanguageTool is not None:
+            try:
+                self.lt_tool = LanguageTool("en-US")
+            except Exception:
+                # Fallback if LanguageTool initialization fails
+                self.lt_tool = None
+        else:
+            self.lt_tool = None
 
     def ingest_user_text(
         self, user_text: UserText, session_id: Optional[str] = None
@@ -161,6 +175,7 @@ class RAGService:
                 session_id=session_id,
                 embedder=self.embedder,
                 source="raw_text",
+                lt_tool=self.lt_tool,
             )
             
             # Batch process all events
@@ -361,6 +376,7 @@ class RAGService:
                 session_id=None,
                 embedder=self.embedder,
                 source="exercise_attempt",
+                lt_tool=self.lt_tool,
             )
             
             is_correct = len(events) == 0

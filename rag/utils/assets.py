@@ -22,5 +22,4 @@ def load_mistake_logic_vocab() -> Dict[str, int]:
         return {"other": 0}
     with open(vocab_path, "r", encoding="utf-8") as f:
         data = json.load(f)
-        categories = data.get("categories", ["other"])
-        return {cat: idx for idx, cat in enumerate(categories)}
+        return data.get("categories", ["other"])
