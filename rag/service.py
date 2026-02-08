@@ -58,7 +58,15 @@ class InMemoryTextStore:  # TODO replace with SQL storage
 
 
 class InMemoryPatternStore:  # TODO replace with SQL + batch consolidation
-    """Stores MistakePatterns for the user."""
+    """
+    DEPRECATED: Pattern subsystem replaced by mistake_type + named vectors.
+    
+    This store is no longer actively populated in the new architecture.
+    Pattern creation (_create_or_update_mistake_pattern) still runs but is disconnected
+    from the active event-driven flow. Will be removed in V2.
+    
+    Legacy: Stores MistakePatterns for the user.
+    """
 
     def __init__(self):
         self.patterns: Dict[str, dict] = {}
@@ -261,7 +269,6 @@ class RAGService:
             
             # Persist occurrence to SQL placeholder
             self.occurrence_store.insert({
-                "pattern_id": None,
                 "mistake_id": event["mistake_id"],
                 "user_text_id": user_text_id,
                 "detected_at": event["timestamp"],
@@ -298,7 +305,6 @@ class RAGService:
             }
             
             self.occurrence_store.insert({
-                "pattern_id": None,
                 "mistake_id": event["mistake_id"],
                 "user_text_id": user_text_id,
                 "detected_at": event["timestamp"],
@@ -334,7 +340,6 @@ class RAGService:
         }
         
         self.occurrence_store.insert({
-            "pattern_id": None,
             "mistake_id": event["mistake_id"],
             "user_text_id": user_text_id,
             "detected_at": event["timestamp"],
@@ -380,12 +385,12 @@ class RAGService:
             )
             
             is_correct = len(events) == 0
-            detected_pattern_id = None
+            detected_mistake_id = None
             
             if events:
                 # Use first detected mistake for feedback
                 first_event = events[0]
-                detected_pattern_id = first_event.get("mistake_id")
+                detected_mistake_id = first_event.get("mistake_id")
                 feedback = self._exercise_feedback_from_event(first_event)
                 
                 # Process all events through deduplication
@@ -421,7 +426,7 @@ class RAGService:
                             "user_id": attempt.user_id,
                             "text": attempt.text,
                             "source": "exercise_attempt",
-                            "confidence": 0.3,
+                            "weight": 0.5,
                         },
                     }
                 ],
@@ -429,7 +434,7 @@ class RAGService:
             
             return {
                 "exercise_attempt_id": exercise_attempt_id,
-                "detected_pattern_id": detected_pattern_id,
+                "detected_mistake_id": detected_mistake_id,
                 "is_correct": is_correct,
                 "feedback": feedback,
             }
@@ -456,7 +461,7 @@ class RAGService:
                             "user_id": attempt.user_id,
                             "text": attempt.text,
                             "source": "exercise_attempt",
-                            "confidence": 0.3,
+                            "weight": 0.5,
                         },
                     }
                 ],
@@ -464,7 +469,7 @@ class RAGService:
             
             return {
                 "exercise_attempt_id": exercise_attempt_id,
-                "detected_pattern_id": detected_pattern.get("pattern_id") if detected_pattern else None,
+                "detected_mistake_id": detected_pattern.get("pattern_id") if detected_pattern else None,
                 "is_correct": is_correct,
                 "feedback": feedback,
             }
@@ -526,11 +531,17 @@ class RAGService:
     def _build_query_embedding(
         self, user_id: str, session_id: Optional[str], fallback_query: Optional[str]
     ) -> List[float]:
+        """
+        Build query embedding from recent mistake_types and session texts.
+        
+        Replaced legacy pattern descriptions with mistake_type labels from occurrences.
+        """
         embedding_texts: List[str] = []
 
-        session_patterns = self.pattern_store.get_by_user_session(user_id, session_id)
-        pattern_descriptions = [
-            p["description"] for p in session_patterns if p.get("description")
+        # Get recent mistake_types for this user/session
+        recent_types = self._get_recent_mistake_types(user_id, session_id, limit=self.max_context_items)
+        mistake_type_labels = [
+            self._mistake_type_to_description(mt) for mt in recent_types
         ]
 
         session_texts = [
@@ -539,8 +550,8 @@ class RAGService:
             if t.get("source") != "exercise"
         ]
 
-        if pattern_descriptions:
-            embedding_texts.extend(pattern_descriptions[: self.max_context_items])
+        if mistake_type_labels:
+            embedding_texts.extend(mistake_type_labels[: self.max_context_items])
 
         if session_texts and (not embedding_texts or len(embedding_texts) < self.max_context_items):
             remaining = self.max_context_items - len(embedding_texts)
@@ -563,6 +574,12 @@ class RAGService:
         return self.embedder.embed_single(combined)
 
     def _ensure_patterns_for_session(self, user_id: str, session_id: Optional[str]) -> None:
+        """
+        DEPRECATED: Pattern creation is no longer part of active flow.
+        
+        Still called for backward compatibility but patterns are not used in lesson generation.
+        Lesson context now comes from mistake_examples collection.
+        """
         session_texts = self.text_store.get_by_user_session(user_id, session_id)
         candidate_texts: List[str] = []
 
@@ -586,6 +603,12 @@ class RAGService:
         embedding: List[float],
         session_id: Optional[str],
     ) -> None:
+        """
+        DEPRECATED: Pattern creation replaced by LanguageTool event-driven mistake_type system.
+        
+        This function still runs but patterns are not used in active lesson generation.
+        Will be removed in V2.
+        """
         similar_results = self.qdrant.search(
             collection_name="user_text_embeddings",
             vector=embedding,
@@ -613,6 +636,12 @@ class RAGService:
     def _create_or_update_mistake_pattern(
         self, cluster_texts: List[str], user_id: str, session_id: Optional[str]
     ) -> None:
+        """
+        DEPRECATED: Pattern creation replaced by mistake_type + mistake_examples collection.
+        
+        Patterns are no longer used in lesson generation. Lesson context comes from
+        mistake_examples queried by mistake_type. Will be removed in V2.
+        """
         if not cluster_texts:
             return
 
@@ -697,36 +726,109 @@ class RAGService:
             recently_used_explanations=recently_used_explanations,
         )
 
+    def _get_recent_mistake_types(
+        self, user_id: str, session_id: Optional[str], limit: int = 10
+    ) -> List[str]:
+        """
+        Get recent mistake_types from occurrences for the user/session.
+        Used for lesson context and query embedding.
+        
+        Note: occurrences store user_text_id, not user_id directly. We need to
+        join through user_texts to filter by user_id. For V1, we use a simpler
+        approach: query mistake_occurrences Qdrant collection by user_id filter.
+        """
+        # Query Qdrant mistake_occurrences collection for this user
+        # Use a dummy vector since we're filtering by user_id
+        dummy_vector = [0.0] * 64
+        results = self.qdrant.search(
+            collection_name="mistake_occurrences",
+            vector=None,
+            limit=limit * 2,  # Get more to account for deduplication
+            filters={"user_id": user_id},
+            named_query={"vector_name": "mistake_logic", "vector": dummy_vector},
+        )
+        
+        # Extract unique mistake_types, preserving order (most recent first via Qdrant ordering)
+        seen_types: Set[str] = set()
+        recent_types: List[str] = []
+        for result in results:
+            payload = result.get("payload", {})
+            mistake_type = payload.get("mistake_type")
+            if mistake_type and mistake_type not in seen_types:
+                # Check session_id filter if provided
+                if session_id is None or payload.get("session_id") == session_id:
+                    seen_types.add(mistake_type)
+                    recent_types.append(mistake_type)
+                    if len(recent_types) >= limit:
+                        break
+        
+        return recent_types
+
+    @staticmethod
+    def _mistake_type_to_description(mistake_type: str) -> str:
+        """
+        Convert mistake_type to human-readable description.
+        For V1, uses simple formatting. V2 can add taxonomy labels.
+        """
+        # Replace underscores/dots with spaces and capitalize
+        return mistake_type.replace("_", " ").replace(".", " ").title()
+
     def _retrieve_mistake_patterns(
         self, query_embedding: List[float], user_filter: Dict[str, str]
     ) -> List[dict]:
-        results = self.qdrant.search(
-            collection_name="mistake_pattern_embeddings",
-            vector=query_embedding,
-            limit=5,
-            filters=user_filter,
-        )
+        """
+        DEPRECATED: Legacy function name. Now retrieves mistake examples by mistake_type.
+        
+        Replaced pattern-based retrieval with mistake_type-based retrieval from mistake_examples.
+        Uses recent mistake_types from occurrences to filter, then semantic search on context_vector.
+        
+        Returns structure compatible with existing lesson construction:
+        - pattern_id → mistake_type (for backward compatibility)
+        - description → mistake_type formatted as description
+        - examples → canonical_example from mistake_examples
+        """
+        user_id = user_filter.get("user_id")
+        if not user_id:
+            return []
 
+        # Get recent mistake_types for this user
+        recent_types = self._get_recent_mistake_types(user_id, None, limit=5)
+        if not recent_types:
+            return []
+
+        # Query mistake_examples for each mistake_type using semantic search
         patterns = []
-        seen_pattern_ids: Set[str] = set()
+        seen_types: Set[str] = set()
 
-        for result in results:
-            if result["score"] < self.min_similarity_score:
+        for mistake_type in recent_types:
+            if mistake_type in seen_types:
+                continue
+            seen_types.add(mistake_type)
+
+            # Search mistake_examples by mistake_type with semantic similarity
+            results = self.qdrant.search(
+                collection_name="mistake_examples",
+                vector=None,
+                limit=1,
+                filters={"mistake_type": mistake_type, "user_id": user_id},
+                named_query={
+                    "vector_name": "context",
+                    "vector": query_embedding,
+                },
+            )
+
+            if not results or results[0]["score"] < self.min_similarity_score:
                 continue
 
-            payload = result.get("payload", {})
-            pattern_id = payload.get("pattern_id", result["id"])
+            payload = results[0].get("payload", {})
+            canonical_example = payload.get("canonical_example", payload.get("text", ""))
 
-            if pattern_id in seen_pattern_ids:
-                continue
-
-            seen_pattern_ids.add(pattern_id)
             patterns.append(
                 {
-                    "pattern_id": pattern_id,
-                    "description": payload.get("description", ""),
-                    "examples": payload.get("examples", []),
-                    "similarity_score": result["score"],
+                    "pattern_id": mistake_type,  # Backward compatibility: use mistake_type as pattern_id
+                    "description": self._mistake_type_to_description(mistake_type),
+                    "examples": [canonical_example] if canonical_example else [],
+                    "similarity_score": results[0]["score"],
                 }
             )
 
@@ -790,8 +892,9 @@ class RAGService:
         artifact_id = str(uuid.uuid4())
         created_at = datetime.now(timezone.utc)
 
-        patterns_covered = [
-            p.get("pattern_id")
+        # Extract mistake_types from detected_patterns (pattern_id is now mistake_type)
+        mistake_types_covered = [
+            p.get("pattern_id")  # pattern_id now contains mistake_type for backward compatibility
             for p in context.detected_patterns
             if p.get("pattern_id")
         ]
@@ -805,7 +908,8 @@ class RAGService:
             "content": lesson.explanation,
             "lesson_type": lesson.topic,
             "approach_type": lesson.approach_type,
-            "patterns_covered": patterns_covered,
+            "mistake_types_covered": mistake_types_covered,  # Replaced patterns_covered
+            "patterns_covered": mistake_types_covered,  # Backward compatibility for batch processor
             "pedagogy_tags": pedagogy_tags,
             "created_at": created_at.isoformat(),
         }
@@ -814,7 +918,7 @@ class RAGService:
 
         content_for_embedding = self._artifact_embedding_text(
             lesson=lesson,
-            patterns_covered=patterns_covered,
+            patterns_covered=mistake_types_covered,  # Still uses old param name for internal consistency
             pedagogy_tags=pedagogy_tags,
         )
 

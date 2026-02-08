@@ -206,16 +206,20 @@ class LearningSummaryBatch:
 
     # ----- Joins -----
     def _join_events(self, inputs: BatchInputs) -> pl.DataFrame:
+        """
+        Join mistake_occurrences with user_texts.
+        
+        V1 MIGRATION: Removed pattern join (pattern_id always None).
+        Added mistake_type column for mistake_type-scoped summaries.
+        """
         if inputs.user_texts.is_empty() or inputs.mistake_occurrences.is_empty():
             return pl.DataFrame()
 
         occ = inputs.mistake_occurrences
         texts = inputs.user_texts
-        patterns = inputs.mistake_patterns
 
         base = (
             occ.join(texts, left_on="user_text_id", right_on="id", how="inner", suffix="_text")
-            .join(patterns, left_on="pattern_id", right_on="id", how="left", suffix="_pattern")
         )
 
         # Critical: exclude controlled exercise attempts from trend learning
@@ -224,9 +228,8 @@ class LearningSummaryBatch:
         return base.select(
             "user_id",
             "session_id",
-            pl.col("pattern_id"),
-            pl.col("canonical_description").alias("pattern_desc"),
-            pl.col("features").alias("pattern_features"),
+            pl.col("mistake_type"),  # Added for mistake_type-scoped summaries
+            pl.col("pattern_id"),  # Keep for backward compatibility (always None)
             pl.col("detected_at"),
             pl.col("day"),
             pl.col("date"),
@@ -293,32 +296,45 @@ class LearningSummaryBatch:
         as_of: datetime,
         lesson_artifacts: pl.DataFrame,
     ) -> List[LearningSummaryRow]:
-        filtered = df.drop_nulls("pattern_id")
+        """
+        V1 MIGRATION: Replaced pattern-scoped summaries with mistake_type-scoped summaries.
+        
+        Groups occurrences by mistake_type instead of pattern_id (which was always None).
+        Renamed scope semantics: SCOPE_PATTERN now represents mistake_type scope.
+        """
+        # Group by mistake_type instead of pattern_id
+        # Note: mistake_type comes from mistake_occurrences payload
+        if "mistake_type" not in df.columns:
+            # If mistake_type not in joined df, try to get it from occurrences
+            return []  # Cannot compute without mistake_type
+
+        filtered = df.drop_nulls("mistake_type")
         if filtered.is_empty():
             return []
 
         grouped = (
-            filtered.group_by(["user_id", "pattern_id", "pattern_desc", "date"])
+            filtered.group_by(["user_id", "mistake_type", "date"])
             .agg(pl.len().alias("occurrences"), pl.n_unique("session_id").alias("sessions"))
             .sort("date")
         )
         summaries: List[LearningSummaryRow] = []
 
-        for keys, user_pattern_df in grouped.group_by(["user_id", "pattern_id", "pattern_desc"]):
+        for keys, user_mistake_type_df in grouped.group_by(["user_id", "mistake_type"]):
             user_id = keys["user_id"]
-            pattern_id = keys["pattern_id"]
-            pattern_desc = keys["pattern_desc"] or "this pattern"
+            mistake_type = keys["mistake_type"]
+            mistake_type_desc = mistake_type.replace("_", " ").replace(".", " ").title() or "this mistake type"
+            
             exposure_count = self._exposure_count_pattern(
                 user_id=user_id,
-                pattern_id=pattern_id,
+                pattern_id=mistake_type,  # pattern_id param now accepts mistake_type
                 lesson_artifacts=lesson_artifacts,
                 window_start=window_start,
                 window_end=as_of.date(),
             )
             metrics = self._compute_metrics(
-                user_pattern_df,
+                user_mistake_type_df,
                 window_type,
-                scope=SCOPE_PATTERN,
+                scope=SCOPE_PATTERN,  # Keep scope name for backward compatibility
                 exposure_count=exposure_count,
             )
             if metrics is None:
@@ -328,7 +344,7 @@ class LearningSummaryBatch:
                 summary_text = self._build_summary_text(
                     window_type=window_type,
                     scope=SCOPE_PATTERN,
-                    pattern_desc=pattern_desc,
+                    pattern_desc=mistake_type_desc,  # pattern_desc now contains mistake_type description
                     metrics=metrics,
                 )
             summaries.append(
@@ -336,8 +352,8 @@ class LearningSummaryBatch:
                     id=str(uuid.uuid4()),
                     user_id=user_id,
                     window_type=window_type,
-                    scope=SCOPE_PATTERN,
-                    scope_key=pattern_id,
+                    scope=SCOPE_PATTERN,  # Keep scope name for backward compatibility
+                    scope_key=mistake_type,  # scope_key now contains mistake_type instead of pattern_id
                     metrics=metrics,
                     summary_text=summary_text,
                     computed_at=as_of,
@@ -503,6 +519,11 @@ class LearningSummaryBatch:
     def _exposure_count_global(
         self, user_id: str, lesson_artifacts: pl.DataFrame, window_start, window_end
     ) -> int:
+        """
+        Count total lesson exposures (mistake_types covered) for global summaries.
+        
+        V1 MIGRATION: Uses mistake_types_covered (with backward compatibility for patterns_covered).
+        """
         if lesson_artifacts.is_empty():
             return 0
         df = lesson_artifacts.filter(
@@ -512,25 +533,44 @@ class LearningSummaryBatch:
         )
         if df.is_empty():
             return 0
-        exposures = df.select(pl.col("patterns_covered").list.lengths().sum()).item()
+        # Try mistake_types_covered first, fallback to patterns_covered for backward compatibility
+        if "mistake_types_covered" in df.columns:
+            exposures = df.select(pl.col("mistake_types_covered").list.lengths().sum()).item()
+        else:
+            exposures = df.select(pl.col("patterns_covered").list.lengths().sum()).item()
         return int(exposures or 0)
 
     def _exposure_count_pattern(
         self,
         user_id: str,
-        pattern_id: str,
+        pattern_id: str,  # V1: Now accepts mistake_type instead of pattern_id
         lesson_artifacts: pl.DataFrame,
         window_start,
         window_end,
     ) -> int:
+        """
+        Count lesson exposures for a specific mistake_type.
+        
+        V1 MIGRATION: pattern_id parameter now contains mistake_type.
+        Uses mistake_types_covered (with backward compatibility for patterns_covered).
+        """
         if lesson_artifacts.is_empty():
             return 0
-        df = lesson_artifacts.filter(
-            (pl.col("user_id") == user_id)
-            & (pl.col("date") >= pl.lit(window_start))
-            & (pl.col("date") <= pl.lit(window_end))
-            & pl.col("patterns_covered").list.contains(pattern_id)
-        )
+        # Try mistake_types_covered first, fallback to patterns_covered for backward compatibility
+        if "mistake_types_covered" in lesson_artifacts.columns:
+            df = lesson_artifacts.filter(
+                (pl.col("user_id") == user_id)
+                & (pl.col("date") >= pl.lit(window_start))
+                & (pl.col("date") <= pl.lit(window_end))
+                & pl.col("mistake_types_covered").list.contains(pattern_id)  # pattern_id is mistake_type
+            )
+        else:
+            df = lesson_artifacts.filter(
+                (pl.col("user_id") == user_id)
+                & (pl.col("date") >= pl.lit(window_start))
+                & (pl.col("date") <= pl.lit(window_end))
+                & pl.col("patterns_covered").list.contains(pattern_id)
+            )
         return int(df.height)
 
     @staticmethod

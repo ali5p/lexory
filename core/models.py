@@ -19,6 +19,13 @@ class MistakeInstance(BaseModel):
 
 
 class MistakePattern(BaseModel):
+    """
+    DEPRECATED: Pattern subsystem replaced by mistake_type + named vectors.
+    
+    Use mistake_type (deterministic taxonomy) instead of pattern_id.
+    Lesson context now comes from mistake_examples collection queried by mistake_type.
+    Will be removed in V2.
+    """
     pattern_id: str
     description: str
     examples: List[str]
