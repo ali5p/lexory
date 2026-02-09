@@ -1,5 +1,6 @@
 """Tests for LanguageTool pipeline."""
 import pytest
+from datetime import datetime, timezone
 from unittest.mock import Mock, patch
 
 from rag.embedder import Embedder
@@ -43,7 +44,9 @@ def test_process_text_no_mistakes(mock_embedder):
         events = process_text(
             text="He goes to school.",
             user_id="user-123",
+            user_text_id="text-001",
             session_id="session-456",
+            timestamp=datetime.now(timezone.utc),
             embedder=mock_embedder,
             source="raw_text",
         )
@@ -52,10 +55,13 @@ def test_process_text_no_mistakes(mock_embedder):
 
 def test_process_text_with_mistake(mock_embedder, mock_lt_tool):
     """Test A: Single mistake creates one event with correct structure."""
+    test_timestamp = datetime.now(timezone.utc)
     events = process_text(
         text="He go to school.",
         user_id="user-123",
+        user_text_id="text-001",
         session_id="session-456",
+        timestamp=test_timestamp,
         embedder=mock_embedder,
         source="raw_text",
         lt_tool=mock_lt_tool,
@@ -66,11 +72,13 @@ def test_process_text_with_mistake(mock_embedder, mock_lt_tool):
     
     assert "mistake_id" in event
     assert event["user_id"] == "user-123"
+    assert event["user_text_id"] == "text-001"
     assert event["session_id"] == "session-456"
     assert event["rule_id"] == "SUBJECT_VERB_AGREEMENT"
     assert event["mistake_type"] == "subject_verb_agreement"
     assert event["source"] == "raw_text"
     assert event["weight"] == 1.0
+    assert event["timestamp"] == test_timestamp.isoformat()
     assert len(event["context_vector"]) == 384
     assert len(event["mistake_logic_vector"]) == 64
     assert event["text"] == "He go to school."
@@ -78,10 +86,13 @@ def test_process_text_with_mistake(mock_embedder, mock_lt_tool):
 
 def test_process_text_exercise_weight(mock_embedder, mock_lt_tool):
     """Test D: Exercise attempts have weight 0.5."""
+    test_timestamp = datetime.now(timezone.utc)
     events = process_text(
         text="He go to school.",
         user_id="user-123",
+        user_text_id="exercise-001",
         session_id=None,
+        timestamp=test_timestamp,
         embedder=mock_embedder,
         source="exercise_attempt",
         lt_tool=mock_lt_tool,
@@ -90,14 +101,19 @@ def test_process_text_exercise_weight(mock_embedder, mock_lt_tool):
     assert len(events) == 1
     assert events[0]["weight"] == 0.5
     assert events[0]["source"] == "exercise_attempt"
+    assert events[0]["user_text_id"] == "exercise-001"
+    assert events[0]["timestamp"] == test_timestamp.isoformat()
 
 
 def test_process_text_multiple_sentences(mock_embedder, mock_lt_tool):
     """Test that multiple sentences are processed separately."""
+    test_timestamp = datetime.now(timezone.utc)
     events = process_text(
         text="He go to school. She go to work.",
         user_id="user-123",
+        user_text_id="text-002",
         session_id=None,
+        timestamp=test_timestamp,
         embedder=mock_embedder,
         source="raw_text",
         lt_tool=mock_lt_tool,
@@ -106,6 +122,9 @@ def test_process_text_multiple_sentences(mock_embedder, mock_lt_tool):
     # Should detect mistake in both sentences
     assert len(events) == 2
     assert all(e["rule_id"] == "SUBJECT_VERB_AGREEMENT" for e in events)
+    # All events should share the same timestamp and user_text_id
+    assert all(e["timestamp"] == test_timestamp.isoformat() for e in events)
+    assert all(e["user_text_id"] == "text-002" for e in events)
 
 
 def test_process_text_unknown_rule_id(mock_embedder):
@@ -120,10 +139,13 @@ def test_process_text_unknown_rule_id(mock_embedder):
     
     mock_lt.check = check_unknown
     
+    test_timestamp = datetime.now(timezone.utc)
     events = process_text(
         text="Some text.",
         user_id="user-123",
+        user_text_id="text-003",
         session_id=None,
+        timestamp=test_timestamp,
         embedder=mock_embedder,
         source="raw_text",
         lt_tool=mock_lt,
@@ -131,3 +153,5 @@ def test_process_text_unknown_rule_id(mock_embedder):
     
     assert len(events) == 1
     assert events[0]["mistake_type"] == "other"
+    assert events[0]["user_text_id"] == "text-003"
+    assert events[0]["timestamp"] == test_timestamp.isoformat()

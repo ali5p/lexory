@@ -180,7 +180,9 @@ class RAGService:
             events = process_text(
                 text=user_text.text,
                 user_id=user_text.user_id,
+                user_text_id=user_text_id,
                 session_id=session_id,
+                timestamp=user_text.timestamp,
                 embedder=self.embedder,
                 source="raw_text",
                 lt_tool=self.lt_tool,
@@ -378,7 +380,9 @@ class RAGService:
             events = process_text(
                 text=attempt.text,
                 user_id=attempt.user_id,
+                user_text_id=exercise_attempt_id,
                 session_id=None,
+                timestamp=attempt.timestamp,
                 embedder=self.embedder,
                 source="exercise_attempt",
                 lt_tool=self.lt_tool,

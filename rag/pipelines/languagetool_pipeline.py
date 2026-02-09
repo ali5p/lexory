@@ -17,7 +17,9 @@ from rag.utils.sentence_splitter import split_sentences
 def process_text(
     text: str,
     user_id: str,
+    user_text_id: str,
     session_id: Optional[str],
+    timestamp: datetime,
     embedder: Embedder,
     source: str = "raw_text",
     lt_tool: Optional[Any] = None,
@@ -28,13 +30,16 @@ def process_text(
     Args:
         text: Input text to check
         user_id: User identifier
-        session_id: Optional session identifier
+        user_text_id: ID linking back to source text/attempt (user_text_id or exercise_attempt_id)
+        session_id: Optional session identifier (None for exercise attempts)
+        timestamp: Timestamp of text submission (shared across all events from this text)
         embedder: Embedder instance for context vectors
         source: "raw_text" or "exercise_attempt"
         lt_tool: Optional LanguageTool instance (for testing)
     
     Returns:
-        List of mistake event dicts, one per detected rule match
+        List of mistake event dicts, one per detected rule match.
+        All events share the same user_text_id, session_id, and timestamp.
     """
     if LanguageTool is None and lt_tool is None:
         raise ImportError("language_tool_python not available")
@@ -77,13 +82,14 @@ def process_text(
             event = {
                 "mistake_id": mistake_id,
                 "user_id": user_id,
+                "user_text_id": user_text_id,  # Links back to source text/attempt
                 "session_id": session_id or "",
                 "rule_id": rule_id,
                 "mistake_type": mistake_type,
                 "text": sentence,
                 "source": source,
                 "weight": weight,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": timestamp.isoformat(),  # Shared timestamp from source text/attempt
                 "mistake_logic_vector": mistake_logic_vector,
                 "context_vector": context_vector,
                 "extra": {},
