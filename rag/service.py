@@ -1,11 +1,14 @@
 import uuid
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, TYPE_CHECKING
 
 try:
     from language_tool_python import LanguageTool
 except ImportError:
     LanguageTool = None
+
+if TYPE_CHECKING:
+    from batch.learning_summaries import InMemorySQLStore
 
 from core.models import (
     ContextAssembly,
@@ -113,9 +116,15 @@ class InMemoryOccurrenceStore:  # TODO replace with SQL storage
 
 
 class RAGService:
-    def __init__(self, qdrant_store: QdrantStore, embedder: Embedder):
+    def __init__(
+        self,
+        qdrant_store: QdrantStore,
+        embedder: Embedder,
+        sql_store: Optional["InMemorySQLStore"] = None,
+    ):
         self.qdrant = qdrant_store
         self.embedder = embedder
+        self.sql_store = sql_store  # Optional: syncs to batch processor's SQL store
         self.text_store = InMemoryTextStore()
         self.pattern_store = InMemoryPatternStore()
         self.artifact_store = InMemoryArtifactStore()
@@ -154,6 +163,17 @@ class RAGService:
             session_id=session_id,
             timestamp=user_text.timestamp,
         )
+        
+        # Sync to SQL store for batch processing
+        if self.sql_store is not None:
+            self.sql_store.user_texts.append({
+                "id": user_text_id,  # Batch processor joins on "id" field
+                "user_text_id": user_text_id,  # Keep for clarity
+                "text": user_text.text,
+                "user_id": user_text.user_id,
+                "session_id": session_id or "",
+                "timestamp": user_text.timestamp.isoformat(),
+            })
 
         embedding = self.embedder.embed_single(user_text.text)
 
@@ -270,14 +290,19 @@ class RAGService:
             }
             
             # Persist occurrence to SQL placeholder
-            self.occurrence_store.insert({
+            occurrence_data = {
                 "mistake_id": event["mistake_id"],
                 "user_text_id": user_text_id,
                 "detected_at": event["timestamp"],
                 "source": event["source"],
                 "mistake_type": mistake_type,
                 "rule_id": event["rule_id"],
-            })
+            }
+            self.occurrence_store.insert(occurrence_data)
+            
+            # Sync to SQL store for batch processing
+            if self.sql_store is not None:
+                self.sql_store.mistake_occurrences.append(occurrence_data)
             
             return example_point, occurrence_point
         
@@ -919,6 +944,10 @@ class RAGService:
         }
 
         self.artifact_store.upsert(artifact_id, artifact_payload)
+        
+        # Sync to SQL store for batch processing
+        if self.sql_store is not None:
+            self.sql_store.lesson_artifacts.append(artifact_payload)
 
         content_for_embedding = self._artifact_embedding_text(
             lesson=lesson,
