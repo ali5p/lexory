@@ -47,14 +47,6 @@ class UserTextRow(BaseModel):
     created_at: datetime
 
 
-class MistakePatternRow(BaseModel):
-    id: str
-    user_id: str
-    canonical_description: str
-    features: Dict[str, str]
-    created_at: datetime
-    last_seen_at: datetime
-
 
 class LessonArtifactRow(BaseModel):
     id: str
@@ -72,8 +64,11 @@ class SessionRow(BaseModel):
 
 
 class MistakeOccurrenceRow(BaseModel):
-    pattern_id: str
+    """Schema for mistake occurrence records. V1: uses mistake_type."""
+
+    mistake_id: str
     user_text_id: str
+    mistake_type: str
     detected_at: datetime
 
 
@@ -83,7 +78,6 @@ class InMemorySQLStore:
 
     def __init__(self):
         self.user_texts: List[Dict] = []
-        self.mistake_patterns: List[Dict] = []
         self.mistake_occurrences: List[Dict] = []
         self.lesson_artifacts: List[Dict] = []
         self.sessions: List[Dict] = []
@@ -123,7 +117,6 @@ SCOPE_PATTERN = "pattern"
 @dataclass
 class BatchInputs:
     user_texts: pl.DataFrame
-    mistake_patterns: pl.DataFrame
     mistake_occurrences: pl.DataFrame
     lesson_artifacts: pl.DataFrame
     sessions: pl.DataFrame
@@ -181,7 +174,6 @@ class LearningSummaryBatch:
     def _load_inputs(self) -> BatchInputs:
         return BatchInputs(
             user_texts=self.sql_store.load_df("user_texts"),
-            mistake_patterns=self.sql_store.load_df("mistake_patterns"),
             mistake_occurrences=self.sql_store.load_df("mistake_occurrences"),
             lesson_artifacts=self.sql_store.load_df("lesson_artifacts"),
             sessions=self.sql_store.load_df("sessions"),
@@ -198,7 +190,6 @@ class LearningSummaryBatch:
 
         return BatchInputs(
             user_texts=add_day(inputs.user_texts, "created_at"),
-            mistake_patterns=add_day(inputs.mistake_patterns, "created_at"),
             mistake_occurrences=add_day(inputs.mistake_occurrences, "detected_at"),
             lesson_artifacts=add_day(inputs.lesson_artifacts, "created_at"),
             sessions=add_day(inputs.sessions, "started_at"),
@@ -208,9 +199,7 @@ class LearningSummaryBatch:
     def _join_events(self, inputs: BatchInputs) -> pl.DataFrame:
         """
         Join mistake_occurrences with user_texts.
-        
-        V1 MIGRATION: Removed pattern join (pattern_id always None).
-        Added mistake_type column for mistake_type-scoped summaries.
+        Returns df with user_id, session_id, mistake_type, detected_at, day, date.
         """
         if inputs.user_texts.is_empty() or inputs.mistake_occurrences.is_empty():
             return pl.DataFrame()
@@ -222,14 +211,13 @@ class LearningSummaryBatch:
             occ.join(texts, left_on="user_text_id", right_on="id", how="inner", suffix="_text")
         )
 
-        # Critical: exclude controlled exercise attempts from trend learning
-        base = base.filter(pl.col("source") != "exercise")
+        # Exclude exercise attempts from trend learning (keep only raw_text)
+        base = base.filter(pl.col("source") != "exercise_attempt")
 
         return base.select(
             "user_id",
             "session_id",
-            pl.col("mistake_type"),  # Added for mistake_type-scoped summaries
-            pl.col("pattern_id"),  # Keep for backward compatibility (always None)
+            pl.col("mistake_type"),
             pl.col("detected_at"),
             pl.col("day"),
             pl.col("date"),
@@ -297,13 +285,9 @@ class LearningSummaryBatch:
         lesson_artifacts: pl.DataFrame,
     ) -> List[LearningSummaryRow]:
         """
-        V1 MIGRATION: Replaced pattern-scoped summaries with mistake_type-scoped summaries.
-        
-        Groups occurrences by mistake_type instead of pattern_id (which was always None).
-        Renamed scope semantics: SCOPE_PATTERN now represents mistake_type scope.
+        Compute mistake_type-scoped summaries.
+        Groups occurrences by mistake_type. SCOPE_PATTERN scope_key = mistake_type.
         """
-        # Group by mistake_type instead of pattern_id
-        # Note: mistake_type comes from mistake_occurrences payload
         if "mistake_type" not in df.columns:
             # If mistake_type not in joined df, try to get it from occurrences
             return []  # Cannot compute without mistake_type
@@ -326,7 +310,7 @@ class LearningSummaryBatch:
             
             exposure_count = self._exposure_count_pattern(
                 user_id=user_id,
-                pattern_id=mistake_type,  # pattern_id param now accepts mistake_type
+                mistake_type=mistake_type,
                 lesson_artifacts=lesson_artifacts,
                 window_start=window_start,
                 window_end=as_of.date(),
@@ -543,33 +527,30 @@ class LearningSummaryBatch:
     def _exposure_count_pattern(
         self,
         user_id: str,
-        pattern_id: str,  # V1: Now accepts mistake_type instead of pattern_id
+        mistake_type: str,
         lesson_artifacts: pl.DataFrame,
         window_start,
         window_end,
     ) -> int:
         """
         Count lesson exposures for a specific mistake_type.
-        
-        V1 MIGRATION: pattern_id parameter now contains mistake_type.
         Uses mistake_types_covered (with backward compatibility for patterns_covered).
         """
         if lesson_artifacts.is_empty():
             return 0
-        # Try mistake_types_covered first, fallback to patterns_covered for backward compatibility
         if "mistake_types_covered" in lesson_artifacts.columns:
             df = lesson_artifacts.filter(
                 (pl.col("user_id") == user_id)
                 & (pl.col("date") >= pl.lit(window_start))
                 & (pl.col("date") <= pl.lit(window_end))
-                & pl.col("mistake_types_covered").list.contains(pattern_id)  # pattern_id is mistake_type
+                & pl.col("mistake_types_covered").list.contains(mistake_type)
             )
         else:
             df = lesson_artifacts.filter(
                 (pl.col("user_id") == user_id)
                 & (pl.col("date") >= pl.lit(window_start))
                 & (pl.col("date") <= pl.lit(window_end))
-                & pl.col("patterns_covered").list.contains(pattern_id)
+                & pl.col("patterns_covered").list.contains(mistake_type)
             )
         return int(df.height)
 

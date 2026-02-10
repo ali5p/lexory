@@ -60,38 +60,6 @@ class InMemoryTextStore:  # TODO replace with SQL storage
         ]
 
 
-class InMemoryPatternStore:  # TODO replace with SQL + batch consolidation
-    """
-    DEPRECATED: Pattern subsystem replaced by mistake_type + named vectors.
-    
-    This store is no longer actively populated in the new architecture.
-    Pattern creation (_create_or_update_mistake_pattern) still runs but is disconnected
-    from the active event-driven flow. Will be removed in V2.
-    
-    Legacy: Stores MistakePatterns for the user.
-    """
-
-    def __init__(self):
-        self.patterns: Dict[str, dict] = {}
-
-    def upsert(self, pattern_id: str, data: dict):
-        self.patterns[pattern_id] = data
-
-    def get_by_user_session(
-        self, user_id: str, session_id: Optional[str], limit: int = 5
-    ) -> List[dict]:
-        if session_id is not None:
-            return [
-                p
-                for p in self.patterns.values()
-                if p["user_id"] == user_id and p.get("last_session_id") == session_id
-            ]
-
-        user_patterns = [p for p in self.patterns.values() if p["user_id"] == user_id]
-        user_patterns.sort(key=lambda p: p.get("updated_at", ""), reverse=True)
-        return user_patterns[:limit]
-
-
 class InMemoryArtifactStore:  # TODO replace with SQL storage
     """Stores LessonArtifacts for non-repetition logic."""
 
@@ -126,7 +94,6 @@ class RAGService:
         self.embedder = embedder
         self.sql_store = sql_store  # Optional: syncs to batch processor's SQL store
         self.text_store = InMemoryTextStore()
-        self.pattern_store = InMemoryPatternStore()
         self.artifact_store = InMemoryArtifactStore()
         self.occurrence_store = InMemoryOccurrenceStore()
         self.mistake_occurrences: List[dict] = []
@@ -228,15 +195,9 @@ class RAGService:
             if occurrence_points:
                 self.qdrant.upsert("mistake_occurrences", occurrence_points)
         except ImportError:
-            # LanguageTool not available, fall back to old pattern creation
-            pass
-
-        self._create_or_update_mistake_pattern_from_text(
-            user_text=user_text,
-            user_text_id=user_text_id,
-            embedding=embedding,
-            session_id=session_id,
-        )
+            raise RuntimeError(
+                "LanguageTool is unavailable. Check your internet connection or try again later."
+            ) from None
 
         return document_id, user_text_id
 
@@ -378,8 +339,6 @@ class RAGService:
         return example_point, occurrence_point
 
     def generate_lesson(self, query: QueryRequest) -> QueryResponse:
-        self._ensure_patterns_for_session(query.user_id, query.session_id)
-
         query_embedding = self._build_query_embedding(
             user_id=query.user_id, session_id=query.session_id, fallback_query=query.query
         )
@@ -468,89 +427,10 @@ class RAGService:
                 "feedback": feedback,
             }
         except ImportError:
-            # Fallback if LanguageTool not available
-            attempt_vector = self.embedder.embed_single(attempt.text)
-            candidate_pattern_ids = self._candidate_patterns_for_exercise(attempt)
-            detected_pattern = self._detect_exercise_pattern(
-                attempt_vector=attempt_vector,
-                user_id=attempt.user_id,
-                candidate_pattern_ids=candidate_pattern_ids,
-            )
-            
-            is_correct = detected_pattern is None
-            feedback = self._exercise_feedback(detected_pattern)
-            
-            self.qdrant.upsert(
-                collection_name="user_text_embeddings",
-                points=[
-                    {
-                        "id": exercise_attempt_id,
-                        "vector": attempt_vector,
-                        "payload": {
-                            "user_id": attempt.user_id,
-                            "text": attempt.text,
-                            "source": "exercise_attempt",
-                            "weight": 0.5,
-                        },
-                    }
-                ],
-            )
-            
-            return {
-                "exercise_attempt_id": exercise_attempt_id,
-                "detected_mistake_id": detected_pattern.get("pattern_id") if detected_pattern else None,
-                "is_correct": is_correct,
-                "feedback": feedback,
-            }
+            raise RuntimeError(
+                "LanguageTool is unavailable. Check your internet connection or try again later."
+            ) from None
 
-    def _candidate_patterns_for_exercise(self, attempt: ExerciseAttempt) -> List[str]:
-        if attempt.target_pattern_id:
-            return [attempt.target_pattern_id]
-
-        recent_patterns = self.pattern_store.get_by_user_session(attempt.user_id, None)
-        return [p["pattern_id"] for p in recent_patterns if p.get("pattern_id")]
-
-    def _detect_exercise_pattern(
-        self,
-        attempt_vector: List[float],
-        user_id: str,
-        candidate_pattern_ids: List[str],
-    ) -> Optional[dict]:
-        if not candidate_pattern_ids:
-            return None
-
-        filters = {"user_id": user_id}
-        if len(candidate_pattern_ids) == 1:
-            filters["pattern_id"] = candidate_pattern_ids[0]
-
-        results = self.qdrant.search(
-            collection_name="mistake_pattern_embeddings",
-            vector=attempt_vector,
-            limit=5,
-            filters=filters,
-        )
-
-        for result in results:
-            if result["score"] < self.pattern_similarity_threshold:
-                continue
-            payload = result.get("payload", {})
-            pattern_id = payload.get("pattern_id")
-            if candidate_pattern_ids and pattern_id not in candidate_pattern_ids:
-                continue
-            return {
-                "pattern_id": pattern_id,
-                "description": payload.get("description", ""),
-            }
-
-        return None
-
-    @staticmethod
-    def _exercise_feedback(detected_pattern: Optional[dict]) -> str:
-        if not detected_pattern:
-            return "Looks correct. Keep going."
-        description = detected_pattern.get("description", "this pattern")
-        return f"Possible issue with {description}. Try correcting the form."
-    
     @staticmethod
     def _exercise_feedback_from_event(event: dict) -> str:
         """Generate feedback from LanguageTool event."""
@@ -576,7 +456,7 @@ class RAGService:
         session_texts = [
             t["text"]
             for t in self.text_store.get_by_user_session(user_id, session_id)
-            if t.get("source") != "exercise"
+            if t.get("source") != "exercise_attempt"
         ]
 
         if mistake_type_labels:
@@ -601,143 +481,6 @@ class RAGService:
 
         combined = " ".join(ordered_unique[: self.max_context_items])
         return self.embedder.embed_single(combined)
-
-    def _ensure_patterns_for_session(self, user_id: str, session_id: Optional[str]) -> None:
-        """
-        DEPRECATED: Pattern creation is no longer part of active flow.
-        
-        Still called for backward compatibility but patterns are not used in lesson generation.
-        Lesson context now comes from mistake_examples collection.
-        """
-        session_texts = self.text_store.get_by_user_session(user_id, session_id)
-        candidate_texts: List[str] = []
-
-        if session_texts:
-            candidate_texts = [t["text"] for t in session_texts]
-        else:
-            # Fallback to recent user texts to keep semantics global, not session-gated.
-            candidate_texts = [t["text"] for t in self.text_store.get_by_user(user_id)]
-
-        if not candidate_texts:
-            return
-
-        cluster_texts = candidate_texts[: self.max_context_items]
-        # Semantic creation/reuse happens inside; pattern_id reuse is driven by similarity in Qdrant.
-        self._create_or_update_mistake_pattern(cluster_texts, user_id, session_id)
-
-    def _create_or_update_mistake_pattern_from_text(
-        self,
-        user_text: UserText,
-        user_text_id: str,
-        embedding: List[float],
-        session_id: Optional[str],
-    ) -> None:
-        """
-        DEPRECATED: Pattern creation replaced by LanguageTool event-driven mistake_type system.
-        
-        This function still runs but patterns are not used in active lesson generation.
-        Will be removed in V2.
-        """
-        similar_results = self.qdrant.search(
-            collection_name="user_text_embeddings",
-            vector=embedding,
-            limit=5,
-            filters={"user_id": user_text.user_id},
-        )
-
-        cluster_texts = [user_text.text]
-        for result in similar_results:
-            if result["score"] < self.pattern_similarity_threshold:
-                continue
-            payload = result.get("payload", {})
-            if payload.get("source") == "exercise":
-                continue
-            if payload.get("user_text_id") == user_text_id:
-                continue
-            candidate_text = payload.get("text")
-            if candidate_text:
-                cluster_texts.append(candidate_text)
-
-        self._create_or_update_mistake_pattern(
-            cluster_texts=cluster_texts, user_id=user_text.user_id, session_id=session_id
-        )
-
-    def _create_or_update_mistake_pattern(
-        self, cluster_texts: List[str], user_id: str, session_id: Optional[str]
-    ) -> None:
-        """
-        DEPRECATED: Pattern creation replaced by mistake_type + mistake_examples collection.
-        
-        Patterns are no longer used in lesson generation. Lesson context comes from
-        mistake_examples queried by mistake_type. Will be removed in V2.
-        """
-        if not cluster_texts:
-            return
-
-        dedup_seen: Set[str] = set()
-        unique_texts: List[str] = []
-        for text in cluster_texts:
-            if text and text not in dedup_seen:
-                dedup_seen.add(text)
-                unique_texts.append(text)
-
-        if not unique_texts:
-            return
-
-        combined_text = " ".join(unique_texts)
-        pattern_vector = self.embedder.embed_single(combined_text)
-
-        existing = self.qdrant.search(
-            collection_name="mistake_pattern_embeddings",
-            vector=pattern_vector,
-            limit=1,
-            filters={"user_id": user_id},
-        )
-
-        canonical_description = unique_texts[0][:120]
-        pattern_id = None
-
-        if existing and existing[0]["score"] >= self.pattern_similarity_threshold:
-            pattern_id = existing[0]["payload"].get("pattern_id", existing[0]["id"])
-
-        if pattern_id is None:
-            for pattern in self.pattern_store.patterns.values():
-                if (
-                    pattern.get("user_id") == user_id
-                    and pattern.get("canonical_description") == canonical_description
-                ):
-                    pattern_id = pattern.get("pattern_id")
-                    break
-
-        if pattern_id is None:
-            pattern_id = str(uuid.uuid4())
-
-        description = f"Recurring mistake: {canonical_description}"
-        examples = unique_texts[: self.max_examples_per_pattern]
-        updated_at = datetime.now(timezone.utc).isoformat()
-
-        pattern_payload = {
-            "pattern_id": pattern_id,
-            "canonical_description": canonical_description,
-            "description": description,
-            "examples": examples,
-            "user_id": user_id,
-            "last_session_id": session_id or "",
-            "updated_at": updated_at,
-        }
-
-        self.pattern_store.upsert(pattern_id, pattern_payload)
-
-        self.qdrant.upsert(
-            collection_name="mistake_pattern_embeddings",
-            points=[
-                {
-                    "id": pattern_id,
-                    "vector": pattern_vector,
-                    "payload": pattern_payload,
-                }
-            ],
-        )
 
     def _retrieve_staged_context(
         self,
