@@ -29,8 +29,6 @@ class QdrantStore:
     def _ensure_collections(self):
         # Standard single-vector collections (384-dim)
         standard_collections = [
-            "user_text_embeddings",
-            "mistake_pattern_embeddings",
             "learning_summary_embeddings",
             "lesson_artifact_embeddings",
         ]

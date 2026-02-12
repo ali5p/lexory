@@ -567,6 +567,7 @@ class LearningSummaryBatch:
             "scope": summary.scope,
             "scope_key": summary.scope_key or "",
             "computed_at": summary.computed_at.isoformat(),
+            "content": summary.summary_text,  # For ContextAssembly long_term_dynamics
         }
         self.qdrant.upsert(
             collection_name="learning_summary_embeddings",

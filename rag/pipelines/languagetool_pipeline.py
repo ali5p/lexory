@@ -70,9 +70,18 @@ def process_text(
             mistake_type = rule_mapping.get(rule_id, "other")
             mistake_id = str(uuid.uuid4())
             
-            # Generate vectors
-            context_vector = embedder.embed_single(sentence)
-            if len(context_vector) != 384:
+            # Rule message from LanguageTool (for lesson context). Only for non-other/non-style.
+            rule_message = ""
+            if mistake_type not in ("other", "style"):
+                rule_message = getattr(match, "message", "") or ""
+            
+            # Generate vectors (skip context_vector for exercise_attempt or other/style - no example_point)
+            need_context = (
+                source != "exercise_attempt"
+                and mistake_type not in ("other", "style")
+            )
+            context_vector = embedder.embed_single(sentence) if need_context else [0.0] * 384
+            if need_context and len(context_vector) != 384:
                 raise ValueError(f"Expected 384-dim context vector, got {len(context_vector)}")
             
             mistake_logic_vector = generate_mistake_logic_vector(mistake_type)
@@ -86,6 +95,7 @@ def process_text(
                 "session_id": session_id or "",
                 "rule_id": rule_id,
                 "mistake_type": mistake_type,
+                "rule_message": rule_message,  # LanguageTool message for lesson context
                 "text": sentence,
                 "source": source,
                 "weight": weight,

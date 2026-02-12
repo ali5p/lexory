@@ -11,8 +11,12 @@ class RuleBasedApproach(BaseApproach):
         # Uses explicit pattern description and long-term context; matches prior behavior.
         parts: List[str] = []
         if context.detected_patterns:
-            pattern_desc = context.detected_patterns[0].get("description", "")
-            if pattern_desc:
+            p = context.detected_patterns[0]
+            pattern_desc = p.get("description", "")
+            rule_message = p.get("rule_message", "")  # LanguageTool message for lesson context
+            if rule_message:
+                parts.append(f"LanguageTool: {rule_message}")
+            elif pattern_desc:
                 parts.append(f"Pattern: {pattern_desc}")
         if context.long_term_dynamics:
             summary_content = context.long_term_dynamics[0].get("content", "")
