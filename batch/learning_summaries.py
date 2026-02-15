@@ -259,7 +259,7 @@ class LearningSummaryBatch:
                 summary_text = self._build_summary_text(
                     window_type=window_type,
                     scope=SCOPE_GLOBAL,
-                    pattern_desc="overall mistakes",
+                    mistake_type_desc="overall mistakes",
                     metrics=metrics,
                 )
             summaries.append(
@@ -328,7 +328,7 @@ class LearningSummaryBatch:
                 summary_text = self._build_summary_text(
                     window_type=window_type,
                     scope=SCOPE_PATTERN,
-                    pattern_desc=mistake_type_desc,  # pattern_desc now contains mistake_type description
+                    mistake_type_desc=mistake_type_desc,
                     metrics=metrics,
                 )
             summaries.append(
@@ -350,8 +350,6 @@ class LearningSummaryBatch:
     def _compute_metrics(
         self,
         counts_df: pl.DataFrame,
-        window_type: str,
-        scope: str,
         exposure_count: int,
     ) -> Optional[Dict[str, float]]:
         if counts_df.height < 2:
@@ -437,8 +435,7 @@ class LearningSummaryBatch:
     def _build_summary_text(
         self,
         window_type: str,
-        scope: str,
-        pattern_desc: str,
+        mistake_type_desc: str,
         metrics: Dict[str, float],
     ) -> str:
         window_label = {
@@ -453,7 +450,7 @@ class LearningSummaryBatch:
         focus_hint = self._focus_hint(metrics)
 
         return (
-            f"Over the last {window_label}, {pattern_desc} errors have {trend_desc}. "
+            f"Over the last {window_label}, {mistake_type_desc} errors have {trend_desc}. "
             f"Improvement is {improvement_level}, with {stability_desc}. "
             f"Recommended focus: {focus_hint}."
         )

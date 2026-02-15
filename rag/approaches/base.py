@@ -12,5 +12,5 @@ class BaseApproach(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def generate_exercises(self, primary_pattern: Optional[dict]) -> List[str]:
+    def generate_exercises(self, primary_mistake_context: Optional[dict]) -> List[str]:
         raise NotImplementedError

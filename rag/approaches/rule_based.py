@@ -12,12 +12,12 @@ class RuleBasedApproach(BaseApproach):
         parts: List[str] = []
         if context.detected_patterns:
             p = context.detected_patterns[0]
-            pattern_desc = p.get("description", "")
+            mistake_type_desc = p.get("description", "")
             rule_message = p.get("rule_message", "")  # LanguageTool message for lesson context
             if rule_message:
                 parts.append(f"LanguageTool: {rule_message}")
-            elif pattern_desc:
-                parts.append(f"Pattern: {pattern_desc}")
+            elif mistake_type_desc:
+                parts.append(f"Pattern: {mistake_type_desc}")
         if context.long_term_dynamics:
             summary_content = context.long_term_dynamics[0].get("content", "")
             if summary_content:
@@ -26,10 +26,10 @@ class RuleBasedApproach(BaseApproach):
             parts.append(f"Topic: {topic}")
         return " ".join(parts)[:500]
 
-    def generate_exercises(self, primary_pattern: Optional[dict]) -> List[str]:
+    def generate_exercises(self, primary_mistake_context: Optional[dict]) -> List[str]:
         exercises: List[str] = []
-        if primary_pattern:
-            examples = primary_pattern.get("examples", [])
+        if primary_mistake_context:
+            examples = primary_mistake_context.get("examples", [])
             if examples:
                 for example in examples[:2]:
                     exercises.append(f"Practice: {example}")

@@ -801,7 +801,7 @@ class RAGService:
             if artifact.get("approach_type")
         }
 
-        primary_pattern = (
+        primary_mistake_context = (
             context.detected_patterns[0] if context.detected_patterns else None
         )
 
@@ -810,11 +810,11 @@ class RAGService:
             context.long_term_dynamics[0] if context.long_term_dynamics else None
         )
 
-        topic = self._extract_topic(primary_pattern, primary_summary)
+        topic = self._extract_topic(primary_mistake_context, primary_summary)
         approach_type = self._select_approach_type(used_approach_types)
         handler = self._get_approach_handler(approach_type)
         explanation = handler.build_explanation(context, topic)
-        exercises = handler.generate_exercises(primary_pattern)
+        exercises = handler.generate_exercises(primary_mistake_context)
 
         return LessonResponse(
             topic=topic,
@@ -824,10 +824,10 @@ class RAGService:
         )
 
     def _extract_topic(
-        self, primary_pattern: Optional[dict], primary_summary: Optional[dict]
+        self, primary_mistake_context: Optional[dict], primary_summary: Optional[dict]
     ) -> str:
-        if primary_pattern:
-            desc = primary_pattern.get("description", "")
+        if primary_mistake_context:
+            desc = primary_mistake_context.get("description", "")
             if desc:
                 return desc.split(".")[0].strip()[:100]
 
