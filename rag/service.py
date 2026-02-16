@@ -1,3 +1,4 @@
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set, TYPE_CHECKING
@@ -18,7 +19,7 @@ from core.models import (
     QueryResponse,
     UserText,
 )
-from rag.approaches.base import BaseApproach
+from rag.approaches.base import BaseApproach, StubApproachHandler
 from rag.approaches.default import DefaultApproach
 from rag.approaches.example_based import ExampleBasedApproach
 from rag.approaches.rule_based import RuleBasedApproach
@@ -851,4 +852,8 @@ class RAGService:
         return available_types[0]
 
     def _get_approach_handler(self, approach_type: str) -> BaseApproach:
-        return self._approach_registry.get(approach_type, self._approach_registry["default"])
+        if os.environ.get("USE_STUB_GENERATOR", "").lower() in ("true", "1"):
+            return StubApproachHandler()
+        return self._approach_registry.get(
+            approach_type, self._approach_registry["default"]
+        )

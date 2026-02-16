@@ -14,3 +14,25 @@ class BaseApproach(ABC):
     @abstractmethod
     def generate_exercises(self, primary_mistake_context: Optional[dict]) -> List[str]:
         raise NotImplementedError
+
+
+class StubApproachHandler(BaseApproach):
+    """Deterministic stub for lesson generation. Used when USE_STUB_GENERATOR=True."""
+
+    def build_explanation(self, context: ContextAssembly, topic: str) -> str:
+        return f"[STUB] Explanation for topic: {topic or 'unknown'}"
+
+    def generate_exercises(
+        self, primary_mistake_context: Optional[object]
+    ) -> List[str]:
+        if primary_mistake_context is None:
+            return []
+        pattern_id = (
+            getattr(primary_mistake_context, "pattern_id", None)
+            or (
+                primary_mistake_context.get("pattern_id", "unknown")
+                if isinstance(primary_mistake_context, dict)
+                else "unknown"
+            )
+        )
+        return [f"Fix the mistake type: {pattern_id}"]
