@@ -11,6 +11,7 @@ except ImportError:
 from rag.embedder import Embedder
 from rag.utils.assets import load_languagetool_mapping
 from rag.utils.mistake_logic_vector import generate_mistake_logic_vector
+from rag.utils.rule_id_normalizer import normalize_rule_id
 from rag.utils.sentence_splitter import split_sentences
 
 
@@ -62,8 +63,8 @@ def process_text(
         seen_rule_ids: set = set()
         
         for match in matches:
-            rule_id = match.ruleId
-            if rule_id in seen_rule_ids:
+            rule_id = normalize_rule_id(getattr(match, "rule_id", None) or getattr(match, "ruleId", None))
+            if not rule_id or rule_id in seen_rule_ids:
                 continue
             seen_rule_ids.add(rule_id)
             
@@ -73,7 +74,7 @@ def process_text(
             # Rule message from LanguageTool (for lesson context). Only for non-other/non-style.
             rule_message = ""
             if mistake_type not in ("other", "style"):
-                rule_message = getattr(match, "message", "") or ""
+                rule_message = str(getattr(match, "message", "") or "")
             
             # Generate vectors (skip context_vector for exercise_attempt or other/style - no example_point)
             need_context = (

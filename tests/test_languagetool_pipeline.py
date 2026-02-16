@@ -17,9 +17,10 @@ class MockLanguageTool:
         """Return mock matches based on text."""
         matches = []
         if "go to" in text.lower() and "he" in text.lower():
-            # Simulate subject-verb agreement error
+            # Simulate subject-verb agreement error (language_tool_python 3.x uses rule_id)
             match = Mock()
-            match.ruleId = "SUBJECT_VERB_AGREEMENT"
+            match.rule_id = "SUBJECT_VERB_AGREEMENT"
+            match.message = "Did you mean 'goes'?"
             matches.append(match)
         return matches
 
@@ -134,7 +135,8 @@ def test_process_text_unknown_rule_id(mock_embedder):
     # Override check to return unknown rule
     def check_unknown(text):
         match = Mock()
-        match.ruleId = "UNKNOWN_RULE"
+        match.rule_id = "UNKNOWN_RULE"
+        match.message = ""
         return [match]
     
     mock_lt.check = check_unknown

@@ -1587,6 +1587,7 @@
   "SUBJECT_MATTER": "style",
   "SUBJECT_MATTER_HYPHEN": "punctuation.basic",
   "SUBJECT_NUMBER": "subject_verb_agreement",
+  "SUBJECT_VERB_AGREEMENT": "subject_verb_agreement",
   "SUBSEQUENT_TO": "style",
   "SUFFER_OF_WITH": "prepositions.verb",
   "SUFFICIENT": "style",

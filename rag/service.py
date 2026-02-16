@@ -793,8 +793,7 @@ class RAGService:
 
 
     def _construct_lesson(
-        self, context: ContextAssembly, user_id: str  # reserved for personalization
-    ) -> LessonResponse:
+        self, context: ContextAssembly) -> LessonResponse:
         used_approach_types = {
             artifact.get("approach_type", "")
             for artifact in context.recently_used_explanations
