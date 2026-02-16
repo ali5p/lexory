@@ -118,11 +118,9 @@ class RAGService:
         else:
             self.lt_tool = None
 
-    def ingest_user_text(
-        self, user_text: UserText, session_id: Optional[str] = None
-    ) -> tuple[str, str]:
+    def ingest_user_text(self, user_text: UserText) -> str:
+        session_id = str(uuid.uuid4())
         user_text_id = str(uuid.uuid4())
-        document_id = str(uuid.uuid4())
 
         self.text_store.store(
             user_text_id=user_text_id,
@@ -180,7 +178,7 @@ class RAGService:
                 "LanguageTool is unavailable. Check your internet connection or try again later."
             ) from None
 
-        return document_id, user_text_id
+        return user_text_id
 
     @staticmethod
     def _build_occurrence_payload(

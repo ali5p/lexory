@@ -63,11 +63,9 @@ class SessionContext(BaseModel):
 class DocumentRequest(BaseModel):
     text: str
     user_id: str
-    session_id: Optional[str] = None
 
 
 class DocumentResponse(BaseModel):
-    document_id: str
     user_text_id: str
     status: str
 
