@@ -455,11 +455,7 @@ class RAGService:
     def _build_query_embedding(
         self, user_id: str, session_id: Optional[str], fallback_query: Optional[str]
     ) -> List[float]:
-        """
-        Build query embedding from recent mistake_types and session texts.
-        
-        Replaced legacy pattern descriptions with mistake_type labels from occurrences.
-        """
+        # Build query embedding from recent mistake_types and session texts.
         embedding_texts: List[str] = []
 
         # Get recent mistake_types for this user/session
@@ -503,7 +499,7 @@ class RAGService:
         user_filter: Dict[str, str],
         session_id: Optional[str],
     ) -> ContextAssembly:
-        detected_patterns = self._retrieve_mistake_patterns(query_embedding, user_filter)
+        detected_mistake_examples = self._retrieve_mistake_examples(query_embedding, user_filter)
         recently_used_explanations = self._retrieve_lesson_artifacts(
             query_embedding, user_filter, session_id
         )
@@ -512,7 +508,7 @@ class RAGService:
         )
 
         return ContextAssembly(
-            detected_patterns=detected_patterns,
+            detected_mistake_examples=detected_mistake_examples,
             recently_used_explanations=recently_used_explanations,
             long_term_dynamics=long_term_dynamics,
         )
@@ -564,17 +560,15 @@ class RAGService:
         # Replace underscores/dots with spaces and capitalize
         return mistake_type.replace("_", " ").replace(".", " ").title()
 
-    def _retrieve_mistake_patterns(
+    def _retrieve_mistake_examples(
         self, query_embedding: List[float], user_filter: Dict[str, str]
     ) -> List[dict]:
         """
-        DEPRECATED: Legacy function name. Now retrieves mistake examples by mistake_type.
-        
-        Replaced pattern-based retrieval with mistake_type-based retrieval from mistake_examples.
+        Now retrieves mistake examples by mistake_type.
+    
         Uses recent mistake_types from occurrences to filter, then semantic search on context_vector.
         
         Returns structure compatible with existing lesson construction:
-        - pattern_id → mistake_type (for backward compatibility)
         - description → mistake_type formatted as description
         - examples → canonical_example from mistake_examples
         """
@@ -617,7 +611,7 @@ class RAGService:
 
             patterns.append(
                 {
-                    "pattern_id": mistake_type,  # Backward compatibility: use mistake_type as pattern_id
+                    "mistake_type": mistake_type, 
                     "description": self._mistake_type_to_description(mistake_type),
                     "examples": [canonical_example] if canonical_example else [],
                     "rule_message": rule_message,
@@ -637,7 +631,6 @@ class RAGService:
         self,
         query_embedding: List[float],
         user_filter: Dict[str, str],
-        session_id: Optional[str] = None,
     ) -> List[dict]:
         results = self.qdrant.search(
             collection_name="lesson_artifact_embeddings",
@@ -724,11 +717,11 @@ class RAGService:
         artifact_id = str(uuid.uuid4())
         created_at = datetime.now(timezone.utc)
 
-        # Extract mistake_types from detected_patterns (pattern_id is now mistake_type)
+        # Extract mistake_types from detected_mistake_examples
         mistake_types_covered = [
-            p.get("pattern_id")  # pattern_id now contains mistake_type for backward compatibility
-            for p in context.detected_patterns
-            if p.get("pattern_id")
+            p.get("mistake_type")
+            for p in context.detected_mistake_examples
+            if p.get("mistake_type")
         ]
 
         pedagogy_tags = self._pedagogy_tags_for_lesson()
@@ -740,8 +733,7 @@ class RAGService:
             "content": lesson.explanation,
             "lesson_type": lesson.topic,
             "approach_type": lesson.approach_type,
-            "mistake_types_covered": mistake_types_covered,  # Replaced patterns_covered
-            "patterns_covered": mistake_types_covered,  # Backward compatibility for batch processor
+            "mistake_types_covered": mistake_types_covered, 
             "pedagogy_tags": pedagogy_tags,
             "created_at": created_at.isoformat(),
         }
@@ -754,7 +746,7 @@ class RAGService:
 
         content_for_embedding = self._artifact_embedding_text(
             lesson=lesson,
-            patterns_covered=mistake_types_covered,  # Still uses old param name for internal consistency
+            mistake_types_covered=mistake_types_covered, 
             pedagogy_tags=pedagogy_tags,
         )
 
@@ -777,16 +769,16 @@ class RAGService:
     @staticmethod
     def _artifact_embedding_text(
         lesson: LessonResponse,
-        patterns_covered: List[str],
+        mistake_types_covered: List[str],
         pedagogy_tags: List[str],
     ) -> str:
-        patterns_text = ", ".join(patterns_covered) if patterns_covered else "no-specific-patterns"
+        mistake_types_covered_text = ", ".join(mistake_types_covered) if mistake_types_covered else "no-specific-mistake_types"
         tags_text = ", ".join(pedagogy_tags) if pedagogy_tags else "general"
 
         return (
             f"Lesson topic: {lesson.topic}. "
             f"Explanation: {lesson.explanation}. "
-            f"Taught patterns: {patterns_text}. "
+            f"Taught mistake types: {mistake_types_covered_text}. "
             f"Pedagogy: {tags_text}."
         )
 
@@ -800,7 +792,7 @@ class RAGService:
         }
 
         primary_mistake_context = (
-            context.detected_patterns[0] if context.detected_patterns else None
+            context.detected_mistake_examples[0] if context.detected_mistake_examples else None
         )
 
         # TODO: add long term dynamics

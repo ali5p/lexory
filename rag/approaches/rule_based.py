@@ -8,16 +8,16 @@ from .base import BaseApproach
 
 class RuleBasedApproach(BaseApproach):
     def build_explanation(self, context: ContextAssembly, topic: str) -> str:
-        # Uses explicit pattern description and long-term context; matches prior behavior.
+        # Uses explicit mistake_type description and long-term context; matches prior behavior.
         parts: List[str] = []
-        if context.detected_patterns:
-            p = context.detected_patterns[0]
+        if context.detected_mistake_examples:
+            p = context.detected_mistake_examples[0]
             mistake_type_desc = p.get("description", "")
             rule_message = p.get("rule_message", "")  # LanguageTool message for lesson context
             if rule_message:
                 parts.append(f"LanguageTool: {rule_message}")
             elif mistake_type_desc:
-                parts.append(f"Pattern: {mistake_type_desc}")
+                parts.append(f"Mistake Type: {mistake_type_desc}")
         if context.long_term_dynamics:
             summary_content = context.long_term_dynamics[0].get("content", "")
             if summary_content:

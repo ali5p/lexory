@@ -27,12 +27,12 @@ class StubApproachHandler(BaseApproach):
     ) -> List[str]:
         if primary_mistake_context is None:
             return []
-        pattern_id = (
-            getattr(primary_mistake_context, "pattern_id", None)
+        mistake_type = (
+            getattr(primary_mistake_context, "mistake_type", None)
             or (
-                primary_mistake_context.get("pattern_id", "unknown")
+                primary_mistake_context.get("mistake_type", "unknown")
                 if isinstance(primary_mistake_context, dict)
                 else "unknown"
             )
         )
-        return [f"Fix the mistake type: {pattern_id}"]
+        return [f"Fix the mistake type: {mistake_type}"]

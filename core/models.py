@@ -18,23 +18,6 @@ class MistakeInstance(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.now)
 
 
-class MistakePattern(BaseModel):
-    """
-    DEPRECATED: Pattern subsystem replaced by mistake_type + named vectors.
-    
-    Use mistake_type (deterministic taxonomy) instead of pattern_id.
-    Lesson context now comes from mistake_examples collection queried by mistake_type.
-    Will be removed in V2.
-    """
-    pattern_id: str
-    description: str
-    examples: List[str]
-    user_id: str
-    last_session_id: Optional[str] = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-
 class LearningSummary(BaseModel):
     summary_id: str
     user_id: str
@@ -48,7 +31,7 @@ class LessonArtifact(BaseModel):
     id: str = Field(alias="artifact_id")
     user_id: str
     session_id: Optional[str]
-    patterns_covered: List[str]
+    mistake_types_covered: List[str]
     pedagogy_tags: List[str]
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -77,7 +60,7 @@ class QueryRequest(BaseModel):
 
 
 class ContextAssembly(BaseModel):
-    detected_patterns: List[Dict]
+    detected_mistake_examples: List[Dict]
     long_term_dynamics: List[Dict]
     recently_used_explanations: List[Dict]
 

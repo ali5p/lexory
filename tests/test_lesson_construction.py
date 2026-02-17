@@ -38,7 +38,7 @@ def test_construct_lesson_stub_returns_valid_structure(
     monkeypatch.setenv("USE_STUB_GENERATOR", "true")
 
     context = ContextAssembly(
-        detected_patterns=[{"pattern_id": "SUBJECT_VERB_AGREEMENT"}],
+        detected_mistake_examples=[{"mistake_type": "SUBJECT_VERB_AGREEMENT"}],
         recently_used_explanations=[],
         long_term_dynamics=[],
     )
@@ -51,7 +51,7 @@ def test_construct_lesson_stub_returns_valid_structure(
 
     # Empty context must not crash (structural contract)
     empty_context = ContextAssembly(
-        detected_patterns=[],
+        detected_mistake_examples=[],
         recently_used_explanations=[],
         long_term_dynamics=[],
     )
