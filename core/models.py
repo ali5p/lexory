@@ -50,6 +50,7 @@ class DocumentRequest(BaseModel):
 
 class DocumentResponse(BaseModel):
     user_text_id: str
+    session_id: str
     status: str
 
 

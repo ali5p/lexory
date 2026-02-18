@@ -119,7 +119,7 @@ class RAGService:
         else:
             self.lt_tool = None
 
-    def ingest_user_text(self, user_text: UserText) -> str:
+    def ingest_user_text(self, user_text: UserText) -> tuple[str, str]:
         session_id = str(uuid.uuid4())
         user_text_id = str(uuid.uuid4())
 
@@ -179,7 +179,7 @@ class RAGService:
                 "LanguageTool is unavailable. Check your internet connection or try again later."
             ) from None
 
-        return user_text_id
+        return user_text_id, session_id
 
     @staticmethod
     def _build_occurrence_payload(
@@ -371,12 +371,14 @@ class RAGService:
 
     def generate_lesson(self, query: QueryRequest) -> QueryResponse:
         query_embedding = self._build_query_embedding(
-            user_id=query.user_id, session_id=query.session_id, fallback_query=query.query
+            user_id=query.user_id,
+            session_id=query.session_id,
+            fallback_query=query.query,
         )
         user_filter = {"user_id": query.user_id}
 
-        context = self._retrieve_staged_context(query_embedding, user_filter, query.session_id)
-        lesson = self._construct_lesson(context, query.user_id)
+        context = self._retrieve_staged_context(query_embedding, user_filter)
+        lesson = self._construct_lesson(context)
 
         self._persist_lesson_artifact(
             lesson=lesson,
@@ -497,11 +499,10 @@ class RAGService:
         self,
         query_embedding: List[float],
         user_filter: Dict[str, str],
-        session_id: Optional[str],
     ) -> ContextAssembly:
         detected_mistake_examples = self._retrieve_mistake_examples(query_embedding, user_filter)
         recently_used_explanations = self._retrieve_lesson_artifacts(
-            query_embedding, user_filter, session_id
+            query_embedding, user_filter
         )
         long_term_dynamics = self._retrieve_learning_summaries(
             query_embedding, user_filter

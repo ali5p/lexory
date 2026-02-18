@@ -19,9 +19,11 @@ async def ingest_document(
     from core.models import UserText
 
     user_text = UserText(text=request.text, user_id=request.user_id)
-    user_text_id = rag_service.ingest_user_text(user_text)
+    user_text_id, session_id = rag_service.ingest_user_text(user_text)
 
-    return DocumentResponse(user_text_id=user_text_id, status="ingested")
+    return DocumentResponse(
+        user_text_id=user_text_id, session_id=session_id, status="ingested"
+    )
 
 
 @router.post("/query", response_model=QueryResponse)

@@ -131,8 +131,8 @@ class QdrantStore:
         if named_query:
             vector_name = named_query["vector_name"]
             query_vector = named_query["vector"]
-            # qdrant-client 1.9+ accepts dict for named vector queries
-            query_vec = {vector_name: query_vector}
+            # qdrant-client expects (vector_name, vector) tuple for named vector search
+            query_vec = (vector_name, query_vector)
             results = self.client.search(
                 collection_name=collection_name,
                 query_vector=query_vec,
