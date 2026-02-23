@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Request
 
-from core.models import DocumentRequest, DocumentResponse, QueryRequest, QueryResponse, ExerciseAttempt
+from core.models import SubmitRequest, SubmitResponse, ExerciseAttempt
 from rag.service import RAGService
 
 
@@ -11,28 +11,24 @@ def get_rag_service(request: Request) -> RAGService:
     return request.app.state.rag_service
 
 
-@router.post("/documents", response_model=DocumentResponse)
-async def ingest_document(
-    request: DocumentRequest,
+@router.post("/submit", response_model=SubmitResponse)
+async def submit_and_lesson(
+    request: SubmitRequest,
     rag_service: RAGService = Depends(get_rag_service),
 ):
-    from core.models import UserText
-
-    user_text = UserText(text=request.text, user_id=request.user_id)
-    user_text_id, session_id = rag_service.ingest_user_text(user_text)
-
-    return DocumentResponse(
-        user_text_id=user_text_id, session_id=session_id, status="ingested"
+    """Combined ingest + lesson. Single flow: text (optional) + user_id → lesson + context."""
+    user_text_id, session_id, lesson_artifact_id, lesson, context = (
+        rag_service.submit_and_lesson(text=request.text, user_id=request.user_id)
     )
 
-
-@router.post("/query", response_model=QueryResponse)
-async def query_lesson(
-    request: QueryRequest,
-    rag_service: RAGService = Depends(get_rag_service),
-):
-    response = rag_service.generate_lesson(request)
-    return response
+    return SubmitResponse(
+        user_text_id=user_text_id,
+        session_id=session_id,
+        lesson_artifact_id=lesson_artifact_id,
+        lesson=lesson,
+        context=context,
+        status="ok",
+    )
 
 
 @router.post("/exercise-feedback")

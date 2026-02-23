@@ -43,21 +43,22 @@ class SessionContext(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
 
 
-class DocumentRequest(BaseModel):
-    text: str
+class SubmitRequest(BaseModel):
+    """Combined ingest + lesson: text (optional for fallback), user_id."""
+
+    text: str = ""
     user_id: str
 
 
-class DocumentResponse(BaseModel):
-    user_text_id: str
+class SubmitResponse(BaseModel):
+    """Full system output for testing; production UI shows only lesson."""
+
+    user_text_id: Optional[str] = None
     session_id: str
+    lesson_artifact_id: str
+    lesson: "LessonResponse"
+    context: "ContextAssembly"
     status: str
-
-
-class QueryRequest(BaseModel):
-    user_id: str
-    query: Optional[str] = None
-    session_id: Optional[str] = None
 
 
 class ContextAssembly(BaseModel):
@@ -82,4 +83,3 @@ class ExerciseAttempt(BaseModel):
     text: str
     user_id: str
     lesson_artifact_id: str  # Required: links attempt to the lesson it exercises
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
