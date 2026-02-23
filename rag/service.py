@@ -15,8 +15,6 @@ from core.models import (
     ContextAssembly,
     ExerciseAttempt,
     LessonResponse,
-    QueryRequest,
-    QueryResponse,
     UserText,
 )
 from rag.approaches.base import BaseApproach, StubApproachHandler
@@ -119,7 +117,15 @@ class RAGService:
         else:
             self.lt_tool = None
 
-    def ingest_user_text(self, user_text: UserText) -> tuple[str, str]:
+    def ingest_user_text(
+        self, user_text: UserText
+    ) -> tuple[str, str, List[dict]]:
+        """
+        Ingest user text, process through LanguageTool, deduplicate, store.
+        Returns: (user_text_id, session_id, session_candidate_points).
+        session_candidate_points: point-like dicts (vectors + payload) from events
+        with mistake_type not in (other, style), for use in query embedding.
+        """
         session_id = str(uuid.uuid4())
         user_text_id = str(uuid.uuid4())
 
@@ -130,19 +136,20 @@ class RAGService:
             session_id=session_id,
             timestamp=user_text.timestamp,
         )
-        
+
         # Sync to SQL store for batch processing
         if self.sql_store is not None:
             self.sql_store.user_texts.append({
-                "id": user_text_id,  # Batch processor joins on "id" field
-                "user_text_id": user_text_id,  # Keep for clarity
+                "id": user_text_id,
+                "user_text_id": user_text_id,
                 "text": user_text.text,
                 "user_id": user_text.user_id,
                 "session_id": session_id or "",
                 "timestamp": user_text.timestamp.isoformat(),
             })
 
-        # Process through LanguageTool pipeline
+        session_candidate_points: List[dict] = []
+
         try:
             events = process_text(
                 text=user_text.text,
@@ -154,11 +161,26 @@ class RAGService:
                 source="raw_text",
                 lt_tool=self.lt_tool,
             )
-            
-            # Batch process all events
-            example_points = []
-            occurrence_points = []
-            
+
+            for event in events:
+                if event.get("mistake_type") not in ("other", "style"):
+                    session_candidate_points.append({
+                        "vectors": {
+                            "mistake_logic": event["mistake_logic_vector"],
+                            "context": event["context_vector"],
+                        },
+                        "payload": {
+                            "session_id": event["session_id"],
+                            "mistake_type": event["mistake_type"],
+                            "text": event["text"],  # sentence (source of context_vector)
+                            "rule_message": event.get("rule_message", ""),
+                            "rule_id": event["rule_id"],
+                        },
+                    })
+
+            example_points: List[dict] = []
+            occurrence_points: List[dict] = []
+
             for event in events:
                 example_point, occurrence_point = self._ingest_mistake_event(
                     event=event,
@@ -168,8 +190,7 @@ class RAGService:
                     example_points.append(example_point)
                 if occurrence_point:
                     occurrence_points.append(occurrence_point)
-            
-            # Batch upsert to Qdrant
+
             if example_points:
                 self.qdrant.upsert("mistake_examples", example_points)
             if occurrence_points:
@@ -179,7 +200,7 @@ class RAGService:
                 "LanguageTool is unavailable. Check your internet connection or try again later."
             ) from None
 
-        return user_text_id, session_id
+        return user_text_id, session_id, session_candidate_points
 
     @staticmethod
     def _build_occurrence_payload(
@@ -369,29 +390,47 @@ class RAGService:
         
         return example_point, occurrence_point
 
-    def generate_lesson(self, query: QueryRequest) -> QueryResponse:
-        query_embedding = self._build_query_embedding(
-            user_id=query.user_id,
-            session_id=query.session_id,
-            fallback_query=query.query,
-        )
-        user_filter = {"user_id": query.user_id}
+    def submit_and_lesson(
+        self, text: str, user_id: str
+    ) -> tuple[Optional[str], str, str, "LessonResponse", "ContextAssembly"]:
+        """
+        Combined ingest + lesson generation. Single flow trigger.
+        Returns: (user_text_id, session_id, lesson_artifact_id, lesson, context)
+        """
+        session_id: str
+        user_text_id: Optional[str] = None
 
+        session_candidate_points: List[dict] = []
+        if text and text.strip():
+            user_text_id, session_id, session_candidate_points = self.ingest_user_text(
+                UserText(text=text.strip(), user_id=user_id)
+            )
+        else:
+            session_id = str(uuid.uuid4())
+
+        query_embedding = self._build_query_embedding(
+            user_id=user_id,
+            session_id=session_id,
+            fallback_query=None,
+            session_candidate_points=session_candidate_points,
+        )
+        user_filter = {"user_id": user_id}
         context = self._retrieve_staged_context(query_embedding, user_filter)
         lesson = self._construct_lesson(context)
-
-        self._persist_lesson_artifact(
+        artifact_id = self._persist_lesson_artifact(
             lesson=lesson,
-            user_id=query.user_id,
-            session_id=query.session_id,
+            user_id=user_id,
+            session_id=session_id,
             context=context,
         )
 
-        return QueryResponse(lesson=lesson, context=context)
+        return user_text_id, session_id, artifact_id, lesson, context
+
 
     def process_exercise_attempt(self, attempt: ExerciseAttempt) -> dict:
         exercise_attempt_id = str(uuid.uuid4())
-        
+        attempt_timestamp = datetime.now(timezone.utc)
+
         # Process through LanguageTool pipeline
         try:
             events = process_text(
@@ -399,7 +438,7 @@ class RAGService:
                 user_id=attempt.user_id,
                 user_text_id=exercise_attempt_id,
                 session_id=None,
-                timestamp=attempt.timestamp,
+                timestamp=attempt_timestamp,
                 embedder=self.embedder,
                 source="exercise_attempt",
                 lt_tool=self.lt_tool,
@@ -431,12 +470,13 @@ class RAGService:
                 "exercise_attempt_id": exercise_attempt_id,
                 "lesson_artifact_id": attempt.lesson_artifact_id,
                 "user_id": attempt.user_id,
-                "timestamp": attempt.timestamp.isoformat(),
+                "attempt_timestamp": attempt_timestamp.isoformat(),
             })
-            
+
             return {
                 "exercise_attempt_id": exercise_attempt_id,
                 "lesson_artifact_id": attempt.lesson_artifact_id,
+                "attempt_timestamp": attempt_timestamp.isoformat(),
                 "tasks": tasks,
             }
         except ImportError:
@@ -455,35 +495,40 @@ class RAGService:
         return f"Detected {mistake_type} mistake. Review the sentence structure."
 
     def _build_query_embedding(
-        self, user_id: str, session_id: Optional[str], fallback_query: Optional[str]
+        self,
+        user_id: str,
+        session_id: Optional[str],
+        fallback_query: Optional[str] = None,
+        session_candidate_points: Optional[List[dict]] = None,
     ) -> List[float]:
-        # Build query embedding from recent mistake_types and session texts.
-        embedding_texts: List[str] = []
+        """
+        Build query embedding. Prefer session context vector when available.
+        Otherwise use recent mistake_types from occurrences; we never embed raw user text.
+        """
+        points = session_candidate_points or []
+        if points:
+            first = points[0]
+            vectors = first.get("vectors", {})
+            context_vec = vectors.get("context")
+            if context_vec and len(context_vec) == 384:
+                return list(context_vec)
 
-        # Get recent mistake_types for this user/session
-        recent_types = self._get_recent_mistake_types(user_id, session_id, limit=self.max_context_items)
+        embedding_texts: List[str] = []
+        recent_types = self._get_recent_mistake_types(
+            user_id, session_id, limit=self.max_context_items
+        )
         mistake_type_labels = [
             self._mistake_type_to_description(mt) for mt in recent_types
-        ]
-
-        session_texts = [
-            t["text"]
-            for t in self.text_store.get_by_user_session(user_id, session_id)
-            if t.get("source") != "exercise_attempt"
         ]
 
         if mistake_type_labels:
             embedding_texts.extend(mistake_type_labels[: self.max_context_items])
 
-        if session_texts and (not embedding_texts or len(embedding_texts) < self.max_context_items):
-            remaining = self.max_context_items - len(embedding_texts)
-            embedding_texts.extend(session_texts[:remaining])
-
         if not embedding_texts and fallback_query:
             embedding_texts.append(fallback_query)
 
         if not embedding_texts:
-            embedding_texts.append("")  # deterministic, no placeholders
+            embedding_texts.append("")  # deterministic fallback
 
         dedup_seen: Set[str] = set()
         ordered_unique: List[str] = []
@@ -714,7 +759,7 @@ class RAGService:
         user_id: str,
         session_id: Optional[str],
         context: ContextAssembly,
-    ) -> None:
+    ) -> str:
         artifact_id = str(uuid.uuid4())
         created_at = datetime.now(timezone.utc)
 
@@ -762,6 +807,7 @@ class RAGService:
                 }
             ],
         )
+        return artifact_id
 
     @staticmethod
     def _pedagogy_tags_for_lesson() -> List[str]:
