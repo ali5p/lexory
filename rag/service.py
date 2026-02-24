@@ -123,8 +123,8 @@ class RAGService:
         """
         Ingest user text, process through LanguageTool, deduplicate, store.
         Returns: (user_text_id, session_id, session_candidate_points).
-        session_candidate_points: point-like dicts (vectors + payload) from events
-        with mistake_type not in (other, style), for use in query embedding.
+        session_candidate_points: point-like dicts intercepted after category check
+        and before semantic dedup, for use in query embedding.
         """
         session_id = str(uuid.uuid4())
         user_text_id = str(uuid.uuid4())
@@ -162,22 +162,6 @@ class RAGService:
                 lt_tool=self.lt_tool,
             )
 
-            for event in events:
-                if event.get("mistake_type") not in ("other", "style"):
-                    session_candidate_points.append({
-                        "vectors": {
-                            "mistake_logic": event["mistake_logic_vector"],
-                            "context": event["context_vector"],
-                        },
-                        "payload": {
-                            "session_id": event["session_id"],
-                            "mistake_type": event["mistake_type"],
-                            "text": event["text"],  # sentence (source of context_vector)
-                            "rule_message": event.get("rule_message", ""),
-                            "rule_id": event["rule_id"],
-                        },
-                    })
-
             example_points: List[dict] = []
             occurrence_points: List[dict] = []
 
@@ -185,6 +169,7 @@ class RAGService:
                 example_point, occurrence_point = self._ingest_mistake_event(
                     event=event,
                     user_text_id=user_text_id,
+                    out_session_candidates=session_candidate_points,
                 )
                 if example_point:
                     example_points.append(example_point)
@@ -246,6 +231,7 @@ class RAGService:
         event: dict,
         user_text_id: str,
         lesson_artifact_id: Optional[str] = None,
+        out_session_candidates: Optional[List[dict]] = None,
     ) -> tuple[Optional[dict], Optional[dict]]:
         """
         Deduplication workflow for mistake events.
@@ -253,6 +239,9 @@ class RAGService:
         Skip example_point (mistake_examples) for:
         - source == "exercise_attempt" (AI-generated text, avoid semantic pollution)
         - mistake_type in ("other", "style") (excluded from lessons; only track in occurrences)
+        
+        When out_session_candidates is provided and event passes category check,
+        appends a candidate point before semantic dedup (for query embedding).
         
         Returns:
             (example_point, occurrence_point) - either can be None
@@ -331,6 +320,16 @@ class RAGService:
             
             return example_point, occurrence_point
         
+        # Intercept before Stage 2: candidate for session query embedding
+        if out_session_candidates is not None:
+            out_session_candidates.append({
+                "vectors": {
+                    "mistake_logic": mistake_logic_vector,
+                    "context": context_vector,
+                },
+                "payload": self._build_example_payload(event),
+            })
+
         # Stage 2: Semantic deduplication
         # Search by context vector with mistake_type filter
         similar_examples = self.qdrant.search(
