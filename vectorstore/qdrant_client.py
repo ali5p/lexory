@@ -9,6 +9,7 @@ from qdrant_client.models import (
     Filter,
     FieldCondition,
     MatchValue,
+    OrderBy,
     PointStruct,
 )
 
@@ -49,6 +50,7 @@ class QdrantStore:
                 "context": (384, Distance.COSINE),
             },
         )
+        self._ensure_timestamp_index("mistake_examples")
         self._ensure_named_collection(
             "mistake_occurrences",
             {
@@ -72,6 +74,19 @@ class QdrantStore:
                 collection_name=collection_name,
                 vectors_config=vectors_config,
             )
+
+    def _ensure_timestamp_index(self, collection_name: str) -> None:
+        """Ensure timestamp payload index for order_by (scroll_most_recent)."""
+        if isinstance(self.client, QdrantLocal):
+            return  # Payload indexes have no effect in local Qdrant
+        try:
+            self.client.create_payload_index(
+                collection_name=collection_name,
+                field_name="timestamp",
+                field_schema="keyword",
+            )
+        except Exception:
+            pass  # Index may already exist
 
     def upsert(self, collection_name: str, points: list[dict]):
         """Upsert points, supporting both single vector and named vectors."""
@@ -158,4 +173,43 @@ class QdrantStore:
             }
             for result in results
         ]
+
+    def scroll_most_recent(
+        self,
+        collection_name: str,
+        user_id: str,
+        limit: int = 1,
+        order_by_key: str = "timestamp",
+    ) -> list[dict]:
+        """
+        Scroll most recent points by payload timestamp (desc).
+        Used for fallback query embedding when session has no candidates.
+        Returns points with vectors (context) for mistake_examples.
+        """
+        query_filter = Filter(
+            must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))]
+        )
+        order = OrderBy(key=order_by_key, direction="desc")
+        try:
+            records, _ = self.client.scroll(
+                collection_name=collection_name,
+                scroll_filter=query_filter,
+                limit=limit,
+                order_by=order,
+                with_payload=True,
+                with_vectors=["context"],
+            )
+        except Exception:
+            return []
+        out = []
+        for rec in records:
+            vec = None
+            if isinstance(getattr(rec, "vector", None), dict):
+                vec = rec.vector.get("context")
+            out.append({
+                "id": rec.id,
+                "payload": rec.payload or {},
+                "vectors": {"context": vec} if vec else {},
+            })
+        return out
 

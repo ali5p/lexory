@@ -318,6 +318,16 @@ class RAGService:
             if self.sql_store is not None:
                 self.sql_store.mistake_occurrences.append(occurrence_data)
             
+            # Intercept: first example for this mistake_type is also a session candidate
+            if out_session_candidates is not None:
+                out_session_candidates.append({
+                    "vectors": {
+                        "mistake_logic": mistake_logic_vector,
+                        "context": context_vector,
+                    },
+                    "payload": self._build_example_payload(event),
+                })
+            
             return example_point, occurrence_point
         
         # Intercept before Stage 2: candidate for session query embedding
@@ -502,7 +512,8 @@ class RAGService:
     ) -> List[float]:
         """
         Build query embedding. Prefer session context vector when available.
-        Otherwise use recent mistake_types from occurrences; we never embed raw user text.
+        Fallback: most recent context_vector from mistake_examples (same semantic space).
+        Last resort: embed mistake_type labels from occurrences.
         """
         points = session_candidate_points or []
         if points:
@@ -511,6 +522,17 @@ class RAGService:
             context_vec = vectors.get("context")
             if context_vec and len(context_vec) == 384:
                 return list(context_vec)
+
+        # Fallback: use most recent context_vector from mistake_examples (same semantic space)
+        recent_points = self.qdrant.scroll_most_recent(
+            collection_name="mistake_examples",
+            user_id=user_id,
+            limit=1,
+        )
+        if recent_points:
+            vec = recent_points[0].get("vectors", {}).get("context")
+            if vec and len(vec) == 384:
+                return list(vec)
 
         embedding_texts: List[str] = []
         recent_types = self._get_recent_mistake_types(
@@ -656,6 +678,7 @@ class RAGService:
 
             patterns.append(
                 {
+                    "mistake_id": payload.get("mistake_id"), 
                     "mistake_type": mistake_type, 
                     "description": self._mistake_type_to_description(mistake_type),
                     "examples": [canonical_example] if canonical_example else [],
