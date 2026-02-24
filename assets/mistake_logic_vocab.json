@@ -34,6 +34,7 @@
     "relative_clauses",
     "punctuation.basic",
     "other",
-    "style"
+    "style",
+    "unmapped"
   ]
 }
