@@ -185,17 +185,57 @@ class QdrantStore:
         Scroll most recent points by payload timestamp (desc).
         Used for fallback query embedding when session has no candidates.
         Returns points with vectors (context) for mistake_examples.
+        QdrantLocal: order_by not supported, so we scroll without it (any matching point).
         """
         query_filter = Filter(
             must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))]
         )
-        order = OrderBy(key=order_by_key, direction="desc")
+        kwargs: dict = {
+            "collection_name": collection_name,
+            "scroll_filter": query_filter,
+            "limit": limit,
+            "with_payload": True,
+            "with_vectors": ["context"],
+        }
+        if not isinstance(self.client, QdrantLocal):
+            kwargs["order_by"] = OrderBy(key=order_by_key, direction="desc")
+        try:
+            records, _ = self.client.scroll(**kwargs)
+        except Exception:
+            return []
+        out = []
+        for rec in records:
+            vec = None
+            if isinstance(getattr(rec, "vector", None), dict):
+                vec = rec.vector.get("context")
+            out.append({
+                "id": rec.id,
+                "payload": rec.payload or {},
+                "vectors": {"context": vec} if vec else {},
+            })
+        return out
+
+    def scroll_by_mistake_id(
+        self,
+        collection_name: str,
+        user_id: str,
+        mistake_id: str,
+    ) -> list[dict]:
+        """
+        Scroll points filtered by user_id + mistake_id (no order_by).
+        Returns points with context vector for mistake_examples.
+        """
+        query_filter = Filter(
+            must=[
+                FieldCondition(key="user_id", match=MatchValue(value=user_id)),
+                FieldCondition(key="mistake_id", match=MatchValue(value=mistake_id)),
+            ]
+        )
         try:
             records, _ = self.client.scroll(
                 collection_name=collection_name,
                 scroll_filter=query_filter,
-                limit=limit,
-                order_by=order,
+                limit=1,
                 with_payload=True,
                 with_vectors=["context"],
             )

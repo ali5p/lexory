@@ -5,3 +5,7 @@ __pycache__/
 .vscode/
 .ruff_cache/
 qdrant_storage/
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3

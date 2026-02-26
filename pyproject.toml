@@ -7,10 +7,12 @@ dependencies = [
     "fastapi>=0.104.0",
     "pydantic>=2.0.0",
     "qdrant-client>=1.9.0",
+    "sqlalchemy>=2.0.0",
     "polars>=0.19.0",
     "sentence-transformers>=2.2.0",
     "uvicorn>=0.24.0",
     "language-tool-python>=3.1.0",
+    "numpy>=2.3,<2.4",
 ]
 
 [project.optional-dependencies]

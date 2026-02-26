@@ -23,6 +23,7 @@ from rag.approaches.example_based import ExampleBasedApproach
 from rag.approaches.rule_based import RuleBasedApproach
 from rag.embedder import Embedder
 from rag.pipelines.languagetool_pipeline import process_text
+from storage.example_imprints import ExampleImprintStore
 from vectorstore.qdrant_client import QdrantStore
 
 
@@ -88,10 +89,12 @@ class RAGService:
         qdrant_store: QdrantStore,
         embedder: Embedder,
         sql_store: Optional["InMemorySQLStore"] = None,
+        imprint_store: Optional[ExampleImprintStore] = None,
     ):
         self.qdrant = qdrant_store
         self.embedder = embedder
         self.sql_store = sql_store  # Optional: syncs to batch processor's SQL store
+        self.imprint_store = imprint_store or ExampleImprintStore()
         self.text_store = InMemoryTextStore()
         self.artifact_store = InMemoryArtifactStore()
         self.occurrence_store = InMemoryOccurrenceStore()
@@ -178,6 +181,10 @@ class RAGService:
 
             if example_points:
                 self.qdrant.upsert("mistake_examples", example_points)
+                for ep in example_points:
+                    payload = ep.get("payload", {})
+                    if all(k in payload for k in ("mistake_id", "user_id", "session_id", "timestamp")):
+                        self.imprint_store.insert(payload)
             if occurrence_points:
                 self.qdrant.upsert("mistake_occurrences", occurrence_points)
         except ImportError:
@@ -417,14 +424,35 @@ class RAGService:
         else:
             session_id = str(uuid.uuid4())
 
-        query_embedding = self._build_query_embedding(
-            user_id=user_id,
-            session_id=session_id,
-            fallback_query=None,
+        query_embedding, primary_example = self._get_query_embedding_and_primary_example(
             session_candidate_points=session_candidate_points,
+            user_id=user_id,
         )
         user_filter = {"user_id": user_id}
-        context = self._retrieve_staged_context(query_embedding, user_filter)
+
+        if query_embedding is None:
+            no_context_lesson = LessonResponse(
+                topic="No usable session context",
+                explanation="No usable session context. Please submit more text to generate a lesson.",
+                exercises=[],
+                approach_type="rule_based",
+            )
+            empty_context = ContextAssembly(
+                detected_mistake_examples=[],
+                long_term_dynamics=[],
+                recently_used_explanations=[],
+            )
+            return (
+                user_text_id,
+                session_id,
+                str(uuid.uuid4()),
+                no_context_lesson,
+                empty_context,
+            )
+
+        context = self._retrieve_staged_context(
+            query_embedding, user_filter, primary_example
+        )
         lesson = self._construct_lesson(context)
         artifact_id = self._persist_lesson_artifact(
             lesson=lesson,
@@ -503,70 +531,82 @@ class RAGService:
         mistake_type = event.get("mistake_type", "error")
         return f"Detected {mistake_type} mistake. Review the sentence structure."
 
-    def _build_query_embedding(
-        self,
-        user_id: str,
-        session_id: Optional[str],
-        fallback_query: Optional[str] = None,
-        session_candidate_points: Optional[List[dict]] = None,
-    ) -> List[float]:
+    def _get_fallback_point(self, user_id: str) -> tuple[Optional[List[float]], Optional[dict]]:
         """
-        Build query embedding. Prefer session context vector when available.
-        Fallback: most recent context_vector from mistake_examples (same semantic space).
-        Last resort: embed mistake_type labels from occurrences.
+        Fallback when no session_candidate_points.
+        Uses ExampleImprintStore (SQL) for chronological lookup, then Qdrant by user_id + mistake_id.
+        """
+        mistake_id = self.imprint_store.get_most_recent_mistake_id(user_id)
+        if mistake_id:
+            points = self.qdrant.scroll_by_mistake_id(
+                collection_name="mistake_examples",
+                user_id=user_id,
+                mistake_id=mistake_id,
+            )
+            if points:
+                p = points[0]
+                vec = p.get("vectors", {}).get("context")
+                payload = p.get("payload", {})
+                if vec and len(vec) == 384:
+                    return list(vec), payload
+        points = self.qdrant.scroll_most_recent(
+            collection_name="mistake_examples",
+            user_id=user_id,
+            limit=1,
+        )
+        if not points:
+            return None, None
+        p = points[0]
+        vec = p.get("vectors", {}).get("context")
+        payload = p.get("payload", {})
+        if vec and len(vec) == 384:
+            return list(vec), payload
+        return None, None
+
+    def _get_query_embedding_and_primary_example(
+        self,
+        session_candidate_points: List[dict],
+        user_id: str,
+    ) -> tuple[Optional[List[float]], Optional[dict]]:
+        """
+        Returns (query_embedding, primary_example) for lesson context.
+        a) Session candidates: use first candidate's context_vector and payload.
+        b) Fallback: _get_fallback_point (scroll_most_recent).
+        c) Neither: (None, None) → no usable session context.
         """
         points = session_candidate_points or []
         if points:
             first = points[0]
             vectors = first.get("vectors", {})
             context_vec = vectors.get("context")
+            payload = first.get("payload", {})
             if context_vec and len(context_vec) == 384:
-                return list(context_vec)
+                return list(context_vec), payload
 
-        # Fallback: use most recent context_vector from mistake_examples (same semantic space)
-        recent_points = self.qdrant.scroll_most_recent(
-            collection_name="mistake_examples",
-            user_id=user_id,
-            limit=1,
-        )
-        if recent_points:
-            vec = recent_points[0].get("vectors", {}).get("context")
-            if vec and len(vec) == 384:
-                return list(vec)
+        return self._get_fallback_point(user_id)
 
-        embedding_texts: List[str] = []
-        recent_types = self._get_recent_mistake_types(
-            user_id, session_id, limit=self.max_context_items
-        )
-        mistake_type_labels = [
-            self._mistake_type_to_description(mt) for mt in recent_types
-        ]
-
-        if mistake_type_labels:
-            embedding_texts.extend(mistake_type_labels[: self.max_context_items])
-
-        if not embedding_texts and fallback_query:
-            embedding_texts.append(fallback_query)
-
-        if not embedding_texts:
-            embedding_texts.append("")  # deterministic fallback
-
-        dedup_seen: Set[str] = set()
-        ordered_unique: List[str] = []
-        for text in embedding_texts:
-            if text not in dedup_seen:
-                dedup_seen.add(text)
-                ordered_unique.append(text)
-
-        combined = " ".join(ordered_unique[: self.max_context_items])
-        return self.embedder.embed_single(combined)
+    def _payload_to_detected_example(self, payload: dict) -> dict:
+        """Format point payload for ContextAssembly detected_mistake_examples."""
+        mistake_type = payload.get("mistake_type", "")
+        canonical = payload.get("canonical_example", payload.get("text", ""))
+        return {
+            "mistake_id": payload.get("mistake_id"),
+            "mistake_type": mistake_type,
+            "description": self._mistake_type_to_description(mistake_type),
+            "examples": [canonical] if canonical else [],
+            "rule_message": payload.get("rule_message", ""),
+            "similarity_score": 1.0,
+        }
 
     def _retrieve_staged_context(
         self,
         query_embedding: List[float],
         user_filter: Dict[str, str],
+        primary_example: Optional[dict],
     ) -> ContextAssembly:
-        detected_mistake_examples = self._retrieve_mistake_examples(query_embedding, user_filter)
+        detected_mistake_examples = (
+            [self._payload_to_detected_example(primary_example)] if primary_example else []
+        )
         recently_used_explanations = self._retrieve_lesson_artifacts(
             query_embedding, user_filter
         )
@@ -627,70 +667,52 @@ class RAGService:
         # Replace underscores/dots with spaces and capitalize
         return mistake_type.replace("_", " ").replace(".", " ").title()
 
-    def _retrieve_mistake_examples(
-        self, query_embedding: List[float], user_filter: Dict[str, str]
-    ) -> List[dict]:
-        """
-        Now retrieves mistake examples by mistake_type.
-    
-        Uses recent mistake_types from occurrences to filter, then semantic search on context_vector.
-        
-        Returns structure compatible with existing lesson construction:
-        - description → mistake_type formatted as description
-        - examples → canonical_example from mistake_examples
-        """
-        user_id = user_filter.get("user_id")
-        if not user_id:
-            return []
-
-        # Get recent mistake_types for this user
-        recent_types = self._get_recent_mistake_types(user_id, None, limit=5)
-        if not recent_types:
-            return []
-
-        # Query mistake_examples for each mistake_type using semantic search
-        patterns = []
-        seen_types: Set[str] = set()
-
-        for mistake_type in recent_types:
-            if mistake_type in seen_types:
-                continue
-            seen_types.add(mistake_type)
-
-            # Search mistake_examples by mistake_type with semantic similarity
-            results = self.qdrant.search(
-                collection_name="mistake_examples",
-                vector=None,
-                limit=1,
-                filters={"mistake_type": mistake_type, "user_id": user_id},
-                named_query={
-                    "vector_name": "context",
-                    "vector": query_embedding,
-                },
-            )
-
-            if not results or results[0]["score"] < self.min_similarity_score:
-                continue
-
-            payload = results[0].get("payload", {})
-            canonical_example = payload.get("canonical_example", payload.get("text", ""))
-            rule_message = payload.get("rule_message", "")  # LanguageTool message for lesson context
-
-            patterns.append(
-                {
-                    "mistake_id": payload.get("mistake_id"), 
-                    "mistake_type": mistake_type, 
-                    "description": self._mistake_type_to_description(mistake_type),
-                    "examples": [canonical_example] if canonical_example else [],
-                    "rule_message": rule_message,
-                    "similarity_score": results[0]["score"],
-                }
-            )
-
-            if len(patterns) >= 3:
-                break
-
-        return patterns
+    # V2: Semantic search by mistake_type (commented for stabilization)
+    # def _retrieve_mistake_examples(
+    #     self, query_embedding: List[float], user_filter: Dict[str, str]
+    # ) -> List[dict]:
+    #     """
+    #     Retrieves mistake examples by mistake_type.
+    #     Uses recent mistake_types from occurrences to filter, then semantic search on context_vector.
+    #     Returns structure compatible with existing lesson construction.
+    #     """
+    #     user_id = user_filter.get("user_id")
+    #     if not user_id:
+    #         return []
+    #     recent_types = self._get_recent_mistake_types(user_id, None, limit=5)
+    #     if not recent_types:
+    #         return []
+    #     patterns = []
+    #     seen_types: Set[str] = set()
+    #     for mistake_type in recent_types:
+    #         if mistake_type in seen_types:
+    #             continue
+    #         seen_types.add(mistake_type)
+    #         results = self.qdrant.search(
+    #             collection_name="mistake_examples",
+    #             limit=1,
+    #             filters={"mistake_type": mistake_type, "user_id": user_id},
+    #             named_query={
+    #                 "vector_name": "context",
+    #                 "vector": query_embedding,
+    #             },
+    #         )
+    #         if not results or results[0]["score"] < self.min_similarity_score:
+    #             continue
+    #         payload = results[0].get("payload", {})
+    #         canonical_example = payload.get("canonical_example", payload.get("text", ""))
+    #         rule_message = payload.get("rule_message", "")
+    #         patterns.append({
+    #             "mistake_id": payload.get("mistake_id"),
+    #             "mistake_type": mistake_type,
+    #             "description": self._mistake_type_to_description(mistake_type),
+    #             "examples": [canonical_example] if canonical_example else [],
+    #             "rule_message": rule_message,
+    #             "similarity_score": results[0]["score"],
+    #         })
+    #         if len(patterns) >= 3:
+    #             break
+    #     return patterns
 
 
     # Lesson Artifacts
