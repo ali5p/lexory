@@ -230,7 +230,6 @@ class RAGService:
             "source": event["source"],
             "weight": event["weight"],
             "timestamp": event["timestamp"],
-            "canonical_example": event["text"],
         }
 
     def _ingest_mistake_event(
@@ -588,7 +587,7 @@ class RAGService:
     def _payload_to_detected_example(self, payload: dict) -> dict:
         """Format point payload for ContextAssembly detected_mistake_examples."""
         mistake_type = payload.get("mistake_type", "")
-        canonical = payload.get("canonical_example", payload.get("text", ""))
+        canonical = payload.get("text", payload.get("text", ""))
         return {
             "mistake_id": payload.get("mistake_id"),
             "mistake_type": mistake_type,
