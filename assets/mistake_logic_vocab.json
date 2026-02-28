@@ -35,6 +35,7 @@
     "punctuation.basic",
     "other",
     "style",
-    "unmapped"
+    "unmapped",
+    "unlisted"
   ]
 }

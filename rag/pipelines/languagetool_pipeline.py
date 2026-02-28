@@ -68,7 +68,7 @@ def process_text(
                 continue
             seen_rule_ids.add(rule_id)
             
-            mistake_type = rule_mapping.get(rule_id, "other")
+            mistake_type = rule_mapping.get(rule_id, "unlisted")
             mistake_id = str(uuid.uuid4())
             
             # Rule message from LanguageTool (for lesson context). Only for non-other/non-style.
