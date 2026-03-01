@@ -174,6 +174,9 @@ class QdrantStore:
             for result in results
         ]
 
+
+    # TODO: scroll_most_recent could be returned to replace scroll_by_mistake_id
+    """
     def scroll_most_recent(
         self,
         collection_name: str,
@@ -181,12 +184,12 @@ class QdrantStore:
         limit: int = 1,
         order_by_key: str = "timestamp",
     ) -> list[dict]:
-        """
-        Scroll most recent points by payload timestamp (desc).
-        Used for fallback query embedding when session has no candidates.
-        Returns points with vectors (context) for mistake_examples.
-        QdrantLocal: order_by not supported, so we scroll without it (any matching point).
-        """
+        
+        # Scroll most recent points by payload timestamp (desc).
+        # Used for fallback query embedding when session has no candidates.
+        # Returns points with vectors (context) for mistake_examples.
+        # QdrantLocal: order_by not supported, so we scroll without it (any matching point).
+        
         query_filter = Filter(
             must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))]
         )
@@ -214,6 +217,7 @@ class QdrantStore:
                 "vectors": {"context": vec} if vec else {},
             })
         return out
+    """
 
     def scroll_by_mistake_id(
         self,

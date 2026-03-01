@@ -102,9 +102,7 @@ class RAGService:
         self.mistake_occurrences: List[dict] = []
         self.max_context_items = 10
         self.min_similarity_score = 0.5
-        self.pattern_similarity_threshold = 0.65
         self.semantic_dedup_threshold = 0.98
-        self.max_examples_per_pattern = 3
         self._approach_registry: Dict[str, BaseApproach] = {
             "rule_based": RuleBasedApproach(),
             "example_based": ExampleBasedApproach(),
@@ -548,6 +546,9 @@ class RAGService:
                 payload = p.get("payload", {})
                 if vec and len(vec) == 384:
                     return list(vec), payload
+        
+        # TODO: scroll_most_recent could be returned to replace scroll_by_mistake_id
+        """
         points = self.qdrant.scroll_most_recent(
             collection_name="mistake_examples",
             user_id=user_id,
@@ -560,6 +561,7 @@ class RAGService:
         payload = p.get("payload", {})
         if vec and len(vec) == 384:
             return list(vec), payload
+        """    
         return None, None
 
     def _get_query_embedding_and_primary_example(
@@ -594,7 +596,7 @@ class RAGService:
             "description": self._mistake_type_to_description(mistake_type),
             "examples": [canonical] if canonical else [],
             "rule_message": payload.get("rule_message", ""),
-            "similarity_score": 1.0,
+            # "similarity_score": TODO,
         }
 
     def _retrieve_staged_context(
