@@ -62,15 +62,14 @@ class SessionRow(BaseModel):
     started_at: datetime
     ended_at: Optional[datetime]
 
-
+"""
 class MistakeOccurrenceRow(BaseModel):
-    """Schema for mistake occurrence records. V1: uses mistake_type."""
-
+    user_id: str
     mistake_id: str
     user_text_id: str
     mistake_type: str
     detected_at: datetime
-
+"""
 
 # ---------- In-memory SQL placeholder (authoritative) ----------
 class InMemorySQLStore:

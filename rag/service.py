@@ -596,7 +596,6 @@ class RAGService:
             "description": self._mistake_type_to_description(mistake_type),
             "examples": [canonical] if canonical else [],
             "rule_message": payload.get("rule_message", ""),
-            # "similarity_score": TODO,
         }
 
     def _retrieve_staged_context(
@@ -621,19 +620,27 @@ class RAGService:
             long_term_dynamics=long_term_dynamics,
         )
 
+    @staticmethod
+    def _mistake_type_to_description(mistake_type: str) -> str:
+        """
+        Convert mistake_type to human-readable description.
+        For V1, uses simple formatting. V2 can add taxonomy labels.
+        """
+        # Replace underscores/dots with spaces and capitalize
+        return mistake_type.replace("_", " ").replace(".", " ").title()
+
+
+    """
     def _get_recent_mistake_types(
         self, user_id: str, session_id: Optional[str], limit: int = 10
     ) -> List[str]:
-        """
-        Get recent mistake_types from occurrences for the user/session.
-        Used for lesson context and query embedding.
         
-        Note: occurrences store user_text_id, not user_id directly. We need to
-        join through user_texts to filter by user_id. For V1, we use a simpler
-        approach: query mistake_occurrences Qdrant collection by user_id filter.
-        """
+        # Get recent mistake_types from occurrences for the user/session.
+        # Used for lesson context and query embedding.
+       
         # Query Qdrant mistake_occurrences collection for this user
         # Use a dummy vector since we're filtering by user_id
+        
         dummy_vector = [0.0] * 64
         results = self.qdrant.search(
             collection_name="mistake_occurrences",
@@ -658,15 +665,8 @@ class RAGService:
                         break
         
         return recent_types
+    """
 
-    @staticmethod
-    def _mistake_type_to_description(mistake_type: str) -> str:
-        """
-        Convert mistake_type to human-readable description.
-        For V1, uses simple formatting. V2 can add taxonomy labels.
-        """
-        # Replace underscores/dots with spaces and capitalize
-        return mistake_type.replace("_", " ").replace(".", " ").title()
 
     # V2: Semantic search by mistake_type (commented for stabilization)
     # def _retrieve_mistake_examples(
