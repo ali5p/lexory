@@ -51,12 +51,16 @@ class QdrantStore:
             },
         )
         self._ensure_timestamp_index("mistake_examples")
+        self._ensure_user_id_index("mistake_examples")
         self._ensure_named_collection(
             "mistake_occurrences",
             {
                 "mistake_logic": (64, Distance.COSINE),
             },
         )
+        self._ensure_user_id_index("mistake_occurrences")
+        self._ensure_user_id_index("learning_summary_embeddings")
+        self._ensure_user_id_index("lesson_artifact_embeddings")
     
     def _ensure_named_collection(
         self, collection_name: str, named_vectors: Dict[str, tuple[int, Distance]]
@@ -76,13 +80,26 @@ class QdrantStore:
             )
 
     def _ensure_timestamp_index(self, collection_name: str) -> None:
-        """Ensure timestamp payload index for order_by (scroll_most_recent)."""
+        # Ensure timestamp payload index for order_by (scroll_most_recent).
         if isinstance(self.client, QdrantLocal):
             return  # Payload indexes have no effect in local Qdrant
         try:
             self.client.create_payload_index(
                 collection_name=collection_name,
                 field_name="timestamp",
+                field_schema="keyword",
+            )
+        except Exception:
+            pass  # Index may already exist
+
+    def _ensure_user_id_index(self, collection_name: str) -> None:
+        """Ensure user_id payload index for multi-tenant isolation."""
+        if isinstance(self.client, QdrantLocal):
+            return  # Payload indexes have no effect in local Qdrant
+        try:
+            self.client.create_payload_index(
+                collection_name=collection_name,
+                field_name="user_id",
                 field_schema="keyword",
             )
         except Exception:

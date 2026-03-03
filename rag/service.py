@@ -1,7 +1,7 @@
 import os
 import uuid
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Set, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Set, TYPE_CHECKING
 
 try:
     from language_tool_python import LanguageTool
@@ -193,6 +193,17 @@ class RAGService:
         return user_text_id, session_id, session_candidate_points
 
     @staticmethod
+    def _user_filter(user_id: str, extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Mandatory user_id filter for multi-tenant isolation.
+        Merges with extra conditions. Use for all Qdrant searches.
+        """
+        base = {"user_id": user_id}
+        if extra:
+            return {**base, **extra}
+        return base
+
+    @staticmethod
     def _build_occurrence_payload(
         event: dict, lesson_artifact_id: Optional[str] = None
     ) -> dict:
@@ -266,6 +277,7 @@ class RAGService:
                 "payload": self._build_occurrence_payload(event, lesson_artifact_id),
             }
             occurrence_data = {
+                "user_id": event["user_id"],
                 "mistake_id": event["mistake_id"],
                 "user_text_id": user_text_id,
                 "detected_at": event["timestamp"],
@@ -280,13 +292,13 @@ class RAGService:
                 self.sql_store.mistake_occurrences.append(occurrence_data)
             return None, occurrence_point
         
-        # Stage 1: Category check - does this mistake_type exist?
+        # Stage 1: Category check - does this mistake_type exist for this user?
         dummy_vector = [0.0] * 64
         existing_examples = self.qdrant.search(
             collection_name="mistake_examples",
             vector=None,
             limit=1,
-            filters={"mistake_type": mistake_type},
+            filters=self._user_filter(event["user_id"], {"mistake_type": mistake_type}),
             named_query={"vector_name": "mistake_logic", "vector": dummy_vector},
         )
         
@@ -309,6 +321,7 @@ class RAGService:
             
             # Persist occurrence to SQL placeholder
             occurrence_data = {
+                "user_id": event["user_id"],
                 "mistake_id": event["mistake_id"],
                 "user_text_id": user_text_id,
                 "detected_at": event["timestamp"],
@@ -345,12 +358,12 @@ class RAGService:
             })
 
         # Stage 2: Semantic deduplication
-        # Search by context vector with mistake_type filter
+        # Search by context vector with user_id + mistake_type filter
         similar_examples = self.qdrant.search(
             collection_name="mistake_examples",
             vector=None,
             limit=5,
-            filters={"mistake_type": mistake_type},
+            filters=self._user_filter(event["user_id"], {"mistake_type": mistake_type}),
             named_query={
                 "vector_name": "context",
                 "vector": context_vector,
@@ -366,6 +379,7 @@ class RAGService:
             }
             
             self.occurrence_store.insert({
+                "user_id": event["user_id"],
                 "mistake_id": event["mistake_id"],
                 "user_text_id": user_text_id,
                 "detected_at": event["timestamp"],
@@ -393,6 +407,7 @@ class RAGService:
         }
         
         self.occurrence_store.insert({
+            "user_id": event["user_id"],
             "mistake_id": event["mistake_id"],
             "user_text_id": user_text_id,
             "detected_at": event["timestamp"],
@@ -640,7 +655,7 @@ class RAGService:
        
         # Query Qdrant mistake_occurrences collection for this user
         # Use a dummy vector since we're filtering by user_id
-        
+
         dummy_vector = [0.0] * 64
         results = self.qdrant.search(
             collection_name="mistake_occurrences",
@@ -723,11 +738,14 @@ class RAGService:
         query_embedding: List[float],
         user_filter: Dict[str, str],
     ) -> List[dict]:
+        user_id = user_filter.get("user_id")
+        if not user_id:
+            return []
         results = self.qdrant.search(
             collection_name="lesson_artifact_embeddings",
             vector=query_embedding,
             limit=10,
-            filters=user_filter,
+            filters=self._user_filter(user_id),
         )
 
         artifacts = []
@@ -778,7 +796,7 @@ class RAGService:
             collection_name="learning_summary_embeddings",
             vector=query_embedding,
             limit=limit,
-            filters={"user_id": user_id},
+            filters=self._user_filter(user_id),
         )
 
         summaries = []
