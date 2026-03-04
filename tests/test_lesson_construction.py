@@ -35,7 +35,7 @@ def test_construct_lesson_stub_returns_valid_structure(
     rag_service: RAGService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Validate structural contract of lesson construction with stub handler."""
-    monkeypatch.setenv("USE_STUB_GENERATOR", "true")
+    monkeypatch.setenv("GENERATOR_MODE", "stub")
 
     context = ContextAssembly(
         detected_mistake_examples=[{"mistake_type": "SUBJECT_VERB_AGREEMENT"}],

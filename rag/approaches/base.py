@@ -17,7 +17,7 @@ class BaseApproach(ABC):
 
 
 class StubApproachHandler(BaseApproach):
-    """Deterministic stub for lesson generation. Used when USE_STUB_GENERATOR=True."""
+    """Deterministic stub for lesson generation. Used when GENERATOR_MODE=stub."""
 
     def build_explanation(self, context: ContextAssembly, topic: str) -> str:
         return f"[STUB] Explanation for topic: {topic or 'unknown'}"

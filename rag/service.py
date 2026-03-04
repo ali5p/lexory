@@ -954,8 +954,11 @@ class RAGService:
         return available_types[0]
 
     def _get_approach_handler(self, approach_type: str) -> BaseApproach:
-        if os.environ.get("USE_STUB_GENERATOR", "").lower() in ("true", "1"):
+        mode = os.environ.get("GENERATOR_MODE", "stub").lower()
+
+        if mode == "stub":
             return StubApproachHandler()
+            
         return self._approach_registry.get(
             approach_type, self._approach_registry["default"]
         )
