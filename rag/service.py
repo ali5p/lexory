@@ -103,8 +103,15 @@ class RAGService:
         self.max_context_items = 10
         self.min_similarity_score = 0.5
         self.semantic_dedup_threshold = 0.98
+        _llm = None
+        if os.environ.get("GENERATOR_MODE", "stub").lower() == "llm":
+            try:
+                from llm.ollama_adapter import OllamaAdapter
+                _llm = OllamaAdapter()
+            except ImportError:
+                pass
         self._approach_registry: Dict[str, BaseApproach] = {
-            "rule_based": RuleBasedApproach(),
+            "rule_based": RuleBasedApproach(llm=_llm),
             "example_based": ExampleBasedApproach(),
             "default": DefaultApproach(),
         }
@@ -915,6 +922,14 @@ class RAGService:
         handler = self._get_approach_handler(approach_type)
         explanation = handler.build_explanation(context, topic)
         exercises = handler.generate_exercises(primary_mistake_context)
+
+        # LLM override: use topic and approach_type from handler when available
+        if getattr(handler, "_last_llm_result", None):
+            result = handler._last_llm_result
+            if result.get("topic"):
+                topic = result["topic"]
+            if result.get("approach_type"):
+                approach_type = result["approach_type"]
 
         return LessonResponse(
             topic=topic,
