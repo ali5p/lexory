@@ -1,3 +1,4 @@
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -9,7 +10,8 @@ from vectorstore.qdrant_client import QdrantStore
 
 
 def create_rag_service() -> RAGService:
-    qdrant_store = QdrantStore()
+    qdrant_url = os.environ.get("QDRANT_URL")
+    qdrant_store = QdrantStore(url=qdrant_url) if qdrant_url else QdrantStore()
     embedder = Embedder()
     return RAGService(qdrant_store, embedder)
 

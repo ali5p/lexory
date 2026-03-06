@@ -1,0 +1,30 @@
+services:
+  lexory:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - /app/.venv  # preserve venv from build (host mount would overwrite)
+    environment:
+      GENERATOR_MODE: ${GENERATOR_MODE:-llm}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2:1.5b}
+      OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434/api/generate}
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+    depends_on:
+      - qdrant
+      - ollama
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - ./qdrant_storage:/qdrant/storage
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./ollama:/root/.ollama

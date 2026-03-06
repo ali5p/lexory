@@ -1,15 +1,13 @@
+import os
+
 import requests
 from .base import BaseLLM
 
 
 class OllamaAdapter(BaseLLM):
-    def __init__(
-        self,
-        model: str = "qwen2:1.5b",
-        url: str = "http://localhost:11434/api/generate",
-    ):
-        self.model = model
-        self.url = url
+    def __init__(self):
+        self.model = os.getenv("OLLAMA_MODEL", "qwen2:1.5b")
+        self.url = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
 
     def generate(self, prompt: str, temperature: float = 0.2) -> str:
         response = requests.post(
@@ -20,7 +18,7 @@ class OllamaAdapter(BaseLLM):
                 "stream": False,
                 "temperature": temperature,
             },
-            timeout=60,
+            timeout=65,
         )
 
         response.raise_for_status()

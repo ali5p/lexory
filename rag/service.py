@@ -104,7 +104,7 @@ class RAGService:
         self.min_similarity_score = 0.5
         self.semantic_dedup_threshold = 0.98
         _llm = None
-        if os.environ.get("GENERATOR_MODE", "stub").lower() == "llm":
+        if os.environ.get("GENERATOR_MODE", "llm").lower() == "llm":
             try:
                 from llm.ollama_adapter import OllamaAdapter
                 _llm = OllamaAdapter()
@@ -969,7 +969,7 @@ class RAGService:
         return available_types[0]
 
     def _get_approach_handler(self, approach_type: str) -> BaseApproach:
-        mode = os.environ.get("GENERATOR_MODE", "stub").lower()
+        mode = os.environ.get("GENERATOR_MODE", "llm").lower()
 
         if mode == "stub":
             return StubApproachHandler()
