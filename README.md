@@ -31,5 +31,7 @@ Set `GENERATOR_MODE=stub` to use deterministic stub lessons instead of the LLM.
 | Variable        | Default                          | Description                    |
 |----------------|----------------------------------|--------------------------------|
 | `GENERATOR_MODE` | `llm`                           | `llm` (default) or `stub`      |
+| `OLLAMA_MODEL` | `qwen2:1.5b`                     | Ollama model name              |
 | `OLLAMA_URL` | `http://ollama:11434/api/generate` | Ollama API URL                 |
 | `QDRANT_URL` | `http://qdrant:6333`             | Qdrant URL (used when set)     |
+| `HF_TOKEN`   | *(optional)*                     | Hugging Face token for higher rate limits |

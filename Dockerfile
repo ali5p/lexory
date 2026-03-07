@@ -5,10 +5,11 @@ WORKDIR /app
 # install uv
 RUN pip install --no-cache-dir uv
 
-# copy dependency metadata first for layer caching
+# copy dependency metadata
 COPY pyproject.toml uv.lock ./
 
-# install dependencies
+# Lock file uses CPU-only torch (pyproject.toml tool.uv.sources).
+ENV UV_HTTP_TIMEOUT=300
 RUN uv sync --no-dev
 
 # copy project source

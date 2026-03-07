@@ -11,6 +11,7 @@ services:
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2:1.5b}
       OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434/api/generate}
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      HF_TOKEN: ${HF_TOKEN:-}
     depends_on:
       - qdrant
       - ollama
