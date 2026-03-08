@@ -143,13 +143,7 @@ class QdrantStore:
     ) -> list[dict]:
         """
         Search with support for single vector (legacy) or named vector queries.
-        
-        Args:
-            collection_name: Collection to search
-            vector: Legacy single vector (for backward compatibility)
-            limit: Max results
-            filters: Payload filters dict
-            named_query: Dict with 'vector_name' and 'vector' for named vector search
+        Uses query_points (qdrant-client 1.10+) or search (QdrantLocal).
         """
         query_filter = None
         if filters:
@@ -158,37 +152,54 @@ class QdrantStore:
                 conditions.append(FieldCondition(key=key, match=MatchValue(value=value)))
             if conditions:
                 query_filter = Filter(must=conditions)
-        
-        # Named vector query (new format)
+
+        # Prefer query_points (remote QdrantClient); fallback to search (QdrantLocal)
         if named_query:
             vector_name = named_query["vector_name"]
             query_vector = named_query["vector"]
-            # qdrant-client expects (vector_name, vector) tuple for named vector search
-            query_vec = (vector_name, query_vector)
-            results = self.client.search(
-                collection_name=collection_name,
-                query_vector=query_vec,
-                limit=limit,
-                query_filter=query_filter,
-            )
-        # Legacy single vector query
+            if hasattr(self.client, "query_points"):
+                resp = self.client.query_points(
+                    collection_name=collection_name,
+                    query=query_vector,
+                    using=vector_name,
+                    limit=limit,
+                    query_filter=query_filter,
+                )
+                results = resp.points if hasattr(resp, "points") else []
+            else:
+                query_vec = (vector_name, query_vector)
+                results = self.client.search(
+                    collection_name=collection_name,
+                    query_vector=query_vec,
+                    limit=limit,
+                    query_filter=query_filter,
+                )
         elif vector is not None:
-            results = self.client.search(
-                collection_name=collection_name,
-                query_vector=vector,
-                limit=limit,
-                query_filter=query_filter,
-            )
+            if hasattr(self.client, "query_points"):
+                resp = self.client.query_points(
+                    collection_name=collection_name,
+                    query=vector,
+                    limit=limit,
+                    query_filter=query_filter,
+                )
+                results = resp.points if hasattr(resp, "points") else []
+            else:
+                results = self.client.search(
+                    collection_name=collection_name,
+                    query_vector=vector,
+                    limit=limit,
+                    query_filter=query_filter,
+                )
         else:
             raise ValueError("Must provide either 'vector' or 'named_query'")
 
         return [
             {
-                "id": result.id,
-                "score": result.score,
-                "payload": result.payload,
+                "id": getattr(r, "id", r.get("id") if isinstance(r, dict) else None),
+                "score": getattr(r, "score", r.get("score", 0.0) if isinstance(r, dict) else 0.0),
+                "payload": getattr(r, "payload", r.get("payload", {}) if isinstance(r, dict) else {}),
             }
-            for result in results
+            for r in results
         ]
 
 

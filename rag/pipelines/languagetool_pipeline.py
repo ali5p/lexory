@@ -3,10 +3,13 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 
+import os
+
 try:
-    from language_tool_python import LanguageTool
+    from language_tool_python import LanguageTool, LanguageToolPublicAPI
 except ImportError:
     LanguageTool = None
+    LanguageToolPublicAPI = None
 
 from rag.embedder import Embedder
 from rag.utils.assets import load_languagetool_mapping
@@ -42,11 +45,23 @@ def process_text(
         List of mistake event dicts, one per detected rule match.
         All events share the same user_text_id, session_id, and timestamp.
     """
-    if LanguageTool is None and lt_tool is None:
+    if LanguageTool is None and LanguageToolPublicAPI is None and lt_tool is None:
         raise ImportError("language_tool_python not available")
-    
+
     if lt_tool is None:
-        lt_tool = LanguageTool("en-US")
+        lt_url = os.environ.get("LANGUAGETOOL_URL", "").strip()
+        if lt_url and LanguageTool is not None:
+            try:
+                lt_tool = LanguageTool("en-US", remote_server=lt_url.rstrip("/"))
+            except Exception:
+                lt_tool = None
+        if lt_tool is None and LanguageToolPublicAPI is not None:
+            try:
+                lt_tool = LanguageToolPublicAPI("en-US")
+            except Exception:
+                lt_tool = None
+    if lt_tool is None:
+        raise ImportError("LanguageTool is unavailable. Check LANGUAGETOOL_URL or internet connection.")
     
     rule_mapping = load_languagetool_mapping()
     sentences = split_sentences(text)

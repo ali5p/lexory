@@ -11,10 +11,12 @@ services:
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2:1.5b}
       OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434/api/generate}
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      LANGUAGETOOL_URL: ${LANGUAGETOOL_URL:-http://languagetool:8010}
       HF_TOKEN: ${HF_TOKEN:-}
     depends_on:
       - qdrant
       - ollama
+      - languagetool
 
   qdrant:
     image: qdrant/qdrant:latest
@@ -29,3 +31,8 @@ services:
       - "11434:11434"
     volumes:
       - ./ollama:/root/.ollama
+
+  languagetool:
+    image: erikvl87/languagetool:latest
+    ports:
+      - "8010:8010"

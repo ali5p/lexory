@@ -4,9 +4,10 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, TYPE_CHECKING
 
 try:
-    from language_tool_python import LanguageTool
+    from language_tool_python import LanguageTool, LanguageToolPublicAPI
 except ImportError:
     LanguageTool = None
+    LanguageToolPublicAPI = None
 
 if TYPE_CHECKING:
     from batch.learning_summaries import InMemorySQLStore
@@ -115,15 +116,19 @@ class RAGService:
             "example_based": ExampleBasedApproach(),
             "default": DefaultApproach(),
         }
-        # Initialize LanguageTool singleton (process-lifetime)
-        if LanguageTool is not None:
+        # Initialize LanguageTool: prefer remote server (no rate limits), else public API
+        lt_url = os.environ.get("LANGUAGETOOL_URL", "").strip()
+        self.lt_tool = None
+        if lt_url and LanguageTool is not None:
             try:
-                self.lt_tool = LanguageTool("en-US")
+                self.lt_tool = LanguageTool("en-US", remote_server=lt_url.rstrip("/"))
             except Exception:
-                # Fallback if LanguageTool initialization fails
-                self.lt_tool = None
-        else:
-            self.lt_tool = None
+                pass
+        if self.lt_tool is None and LanguageToolPublicAPI is not None:
+            try:
+                self.lt_tool = LanguageToolPublicAPI("en-US")
+            except Exception:
+                pass
 
     def ingest_user_text(
         self, user_text: UserText
