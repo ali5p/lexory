@@ -1,7 +1,10 @@
 import os
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
+
+load_dotenv()
 
 from api.routes import router
 from rag.embedder import Embedder

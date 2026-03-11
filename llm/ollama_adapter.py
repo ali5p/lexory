@@ -7,14 +7,14 @@ from .base import BaseLLM
 
 def _ollama_url() -> str:
     url = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
-    # In Docker, localhost points to the container; use service name instead
-    if os.getenv("QDRANT_URL"):
-        parsed = urlparse(url)
-        host = parsed.hostname or "localhost"
-        if host in ("localhost", "127.0.0.1"):
-            netloc = f"ollama:{parsed.port}" if parsed.port else "ollama"
-            parsed = parsed._replace(netloc=netloc)
-            url = urlunparse(parsed)
+    parsed = urlparse(url)
+    host = parsed.hostname or "localhost"
+    # Only rewrite when we're in Docker: QDRANT_URL uses service name (qdrant), not localhost
+    qdrant_url = os.getenv("QDRANT_URL", "")
+    if "qdrant" in qdrant_url and host in ("localhost", "127.0.0.1"):
+        netloc = f"ollama:{parsed.port}" if parsed.port else "ollama"
+        parsed = parsed._replace(netloc=netloc)
+        url = urlunparse(parsed)
     return url
 
 
