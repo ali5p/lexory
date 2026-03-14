@@ -1,6 +1,267 @@
 # Lexory
 
-Minimal RAG-based language learning backend. Ingests user text, detects grammar mistakes via LanguageTool, stores examples in a vector database, and generates personalized lessons.
+
+# System Overview
+
+Lexory is a prototype system that generates grammar lessons from users’ real-life texts.
+
+It is designed for advanced language learners and native speakers.
+
+For those who use the language every day in regular communication.
+
+For people who do not have much time or energy for formal language classes and want learning to be close to their real-life usage.
+
+Also for those who do not have enough patience to read entire textbooks.
+
+Lexory is created to analyze and assess grammar gaps based on a user’s real-life language use.
+
+It is designed to function like a personal tutor–copilot that can identify weaker areas by observing how you speak or by analyzing texts you write for any purpose, without requiring formal tests. It then attempts to teach you using different pedagogical approaches until it finds what works best for you.
+
+Qdrant collections behave as user repositories (after a pseudonymization process, of course).
+
+### Pipeline
+
+```
+user text
+→ grammar detection
+→ embedding generation
+→ vector retrieval
+→ lesson generation
+```
+
+### Stack
+
+- Backend: FastAPI
+- Vector database: Qdrant
+- Grammar detection: LanguageTool
+- LLM generation: Ollama
+- Storage: SQLite
+- Infrastructure: Docker
+
+### Current State
+
+Working prototype.
+
+Some retrieval logic is intentionally simplified while the system pipeline is being stabilized.
+
+---
+
+# Engineering Notes
+
+This project explores a **RAG-based architecture for grammar learning systems**.
+
+Several design decisions were made during development.
+
+---
+
+## Semantic deduplication of examples
+
+Examples are stored in Qdrant using **two named vectors**:
+
+- **mistake_logic** – 64-dimensional vector used for mistake category grouping
+- **semantic context** – 384-dimensional embedding used for contextual similarity
+
+To prevent storing nearly identical examples:
+
+- embeddings are compared using cosine similarity
+- new examples are stored only if similarity < **0.9**
+- otherwise only an additional **occurrence** is recorded
+
+This keeps the dataset compact while preserving usage frequency.
+
+---
+
+## Multi-service architecture
+
+The system integrates several external components:
+
+- grammar analysis
+- vector storage
+- LLM lesson generation
+
+All services are orchestrated with Docker.
+
+---
+
+## Stability before retrieval quality
+
+Part of the semantic retrieval pipeline was temporarily simplified while stabilizing the end-to-end system flow.
+
+Current pipeline:
+
+```
+User text
+→ LanguageTool grammar detection
+→ embedding generation
+→ semantic deduplication
+→ vector retrieval (simplified)
+→ lesson generation
+```
+
+Once the system pipeline is stable, retrieval quality improvements are planned.
+
+---
+
+# Known Issues / Tradeoffs
+
+### Taxonomy instability
+
+External grammar rules from LanguageTool sometimes produce **unmapped rule_id values**.
+
+Currently these are routed to a fallback category (`other`).
+
+Planned solution:
+
+- introduce an interactive mapper that converts LanguageTool rule messages into internal `mistake_type` categories
+- stabilize the taxonomy in `languagetool_to_mistaketype.json`
+
+Because `mistake_type` is used to generate deterministic **mistake_logic vectors**, taxonomy stabilization is required before expanding the semantic RAG logic.
+
+---
+
+### Retrieval bug
+
+`recently_used_explanations` currently returns an empty list due to an issue in `_retrieve_lesson_artifacts`.
+
+Planned fix:
+
+- switch to named vector search
+- retrieve by `mistake_logic` vector first
+- then filter by most recent examples
+
+This change also depends on taxonomy stabilization.
+
+---
+
+### Local vector sorting limitation
+
+An SQLite-based **Imprint storage layer** was introduced to mirror vector payload metadata.
+
+This compensates for sorting limitations in the local Qdrant client.
+
+Workflow:
+
+```
+SQLite
+→ timestamp filtering
+→ retrieve mistake_id
+→ direct point lookup in Qdrant
+```
+
+SQLite is used because it provides reliable indexing for time-based queries.
+
+
+## Project Status
+
+Lexory is an experimental prototype.
+
+Current focus:
+
+- refining mistake taxonomy
+- improving retrieval quality
+
+Future improvements include stronger fine-tuned LLM models and expanded semantic retrieval.
+
+
+## Architecture
+
+### Text ingestion flow
+How user text is processed and stored.
+
+```mermaid
+flowchart TB
+    A[User text /submit]
+    B[ingest_user_text]
+    C[LanguageTool Pipeline]
+    D[Embedding generation]
+    E[Create mistake event]
+
+    F{Category exists?}
+    G[Create example + occurrence]
+    H[Semantic similarity check]
+
+    I{Similarity > 0.9?}
+    J[Store occurrence only]
+    K[Store example + occurrence]
+
+    L[(Qdrant mistake_examples)]
+    M[(Qdrant mistake_occurrences)]
+    N[(Occurrence store)]
+    O[(Imprint store)]
+
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+
+    E --> F
+    F -- No --> G
+    F -- Yes --> H
+
+    H --> I
+    I -- Yes --> J
+    I -- No --> K
+
+    G --> L
+    G --> M
+    G --> N
+    G --> O
+
+    J --> M
+    J --> N
+
+    K --> L
+    K --> M
+    K --> N
+    K --> O
+```
+
+*Category exists* = user already has examples for this `mistake_type`. *Similarity > 0.9* = near-duplicate; store occurrence only. `exercise_attempt` and `other`/`style` types skip examples and go straight to occurrence.
+
+### Lesson generation flow
+How stored data is used to generate lessons.
+
+```mermaid
+flowchart TB
+    A[submit_and_lesson]
+    B{Text provided?}
+    C[ingest_user_text]
+    D[Get query embedding]
+    E{Embedding available?}
+    F[No-context lesson]
+
+    G[_retrieve_staged_context]
+    H[_construct_lesson]
+    I[_persist_lesson_artifact]
+
+    J[Session candidates]
+    K[(Imprint store)]
+    L[(mistake_examples)]
+    M[(lesson_artifact_embeddings)]
+    N[(learning_summary_embeddings)]
+    O[(lesson_artifact_embeddings)]
+
+    A --> B
+    B -- Yes --> C
+    B -- No --> D
+    C --> J
+    J --> D
+    K --> D
+    L --> D
+
+    D --> E
+    E -- No --> F
+    E -- Yes --> G
+
+    G --> H
+    M --> G
+    N --> G
+
+    H --> I
+    I --> O
+```
+
+*Query embedding*: from session candidates (from ingest) or fallback via Imprint store → `mistake_examples`. *Context*: primary mistake + similar lesson artifacts + learning summaries. *Lesson*: approach handler (LLM or stub) builds explanation and exercises.
 
 ## Running with Docker
 

@@ -74,7 +74,7 @@ def test_deduplication_stage1_no_existing_examples(rag_service, mock_qdrant):
 
 
 def test_deduplication_stage2_high_similarity(rag_service, mock_qdrant):
-    """Test B: High similarity (>0.98) creates only occurrence."""
+    """Test B: High similarity (>0.9) creates only occurrence."""
     event = {
         "mistake_id": "mistake-456",
         "user_id": "user-123",
@@ -107,7 +107,7 @@ def test_deduplication_stage2_high_similarity(rag_service, mock_qdrant):
 
 
 def test_deduplication_stage2_low_similarity(rag_service, mock_qdrant):
-    """Test C: Low similarity (<=0.98) creates new example + occurrence."""
+    """Test C: Low similarity (<=0.9) creates new example + occurrence."""
     event = {
         "mistake_id": "mistake-789",
         "user_id": "user-123",

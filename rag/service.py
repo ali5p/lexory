@@ -103,7 +103,7 @@ class RAGService:
         self.mistake_occurrences: List[dict] = []
         self.max_context_items = 10
         self.min_similarity_score = 0.5
-        self.semantic_dedup_threshold = 0.98
+        self.semantic_dedup_threshold = 0.9
         _llm = None
         if os.environ.get("GENERATOR_MODE", "llm").lower() == "llm":
             try:
