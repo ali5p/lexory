@@ -125,7 +125,7 @@ Because `mistake_type` is used to generate deterministic **mistake_logic vectors
 
 Planned fix:
 
-- switch to named vector search
+- switch to Named Vectors with 64-dim `mistake_logic` vector + 384-dim artifact_vector or single `mistake_logic` vector + lesson artifacts in payload 
 - retrieve by `mistake_logic` vector first
 - then filter by most recent examples
 
@@ -133,11 +133,17 @@ This change also depends on taxonomy stabilization.
 
 ---
 
-### Local vector sorting limitation
+### LearningSummaryBatch (Not Integrated Yet)
+
+LearningSummaryBatch is currently unused. It is planned to be part of the context assembly for lesson generation once the taxonomy is stabilized.
+
+---
+
+### Local vector query limitation
 
 An SQLite-based **Imprint storage layer** was introduced to mirror vector payload metadata.
 
-This compensates for sorting limitations in the local Qdrant client.
+This compensates for sorting (indexing) limitations in the local Qdrant client.
 
 Workflow:
 
@@ -145,7 +151,7 @@ Workflow:
 SQLite
 → timestamp filtering
 → retrieve mistake_id
-→ direct point lookup in Qdrant
+→ Qdrant payload filter (mistake_id)
 ```
 
 SQLite is used because it provides reliable indexing for time-based queries.
@@ -300,3 +306,12 @@ Set `GENERATOR_MODE=stub` to use deterministic stub lessons instead of the LLM.
 | `QDRANT_URL` | `http://qdrant:6333`             | Qdrant URL (used when set)     |
 | `HF_TOKEN`   | *(optional)*                     | Hugging Face token for higher rate limits |
 | `LANGUAGETOOL_URL` | `http://languagetool:8010` | LanguageTool server URL (Docker: local container; omit for public API) |
+
+---
+
+## License
+
+This project is licensed under the GPL-3.0 License — see the LICENSE file for details.
+
+This repository currently serves as a personal research and portfolio project.
+If you are interested in commercial use or collaboration, feel free to contact the author.
