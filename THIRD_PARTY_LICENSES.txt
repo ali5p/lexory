@@ -1,0 +1,272 @@
+# THIRD-PARTY SOFTWARE LICENSES
+
+This product uses various open-source components. The following licenses apply to those components.
+
+
+## FastAPI
+
+Project: FastAPI
+License: MIT License
+Source: https://github.com/tiangolo/fastapi
+
+Copyright (c) 2018–present, Sebastián Ramírez
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the “Software”), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, subject to the conditions of the MIT License.
+
+---
+
+## Qdrant
+
+Project: Qdrant
+License: Apache License 2.0
+Source: https://github.com/qdrant/qdrant
+
+Copyright (c) 2020–present, Qdrant Team
+
+Licensed under the Apache License, Version 2.0 (the “License”); you may not use
+this file except in compliance with the License. You may obtain a copy of the License at:
+https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed under the
+License is distributed on an “AS IS” BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
+
+---
+
+## LanguageTool
+
+Project: LanguageTool
+License: LGPL 2.1+ 
+Source: https://github.com/jxmorris12/language_tool_python
+
+Copyright (c) 2003–present, Daniel Naber and contributors
+
+This product uses language_tool_python (https://github.com/jxmorris12/language_tool_python) 
+as a Python interface to LanguageTool for grammar and spell checking.
+In accordance with the LGPL, users may replace or modify the LanguageTool binaries used by this application.
+
+---
+
+## Ollama
+
+Project: Ollama
+License: Proprietary (as provided by Ollama)
+Source: https://ollama.com
+
+Ollama is used for LLM generation. Users must comply with Ollama’s license terms.
+
+---
+
+## Qwen2:1.5b
+
+Project: Qwen2:1.5b
+License: Qwen License Agreement
+Source: https://huggingface.co/Qwen/Qwen2:1.5b
+
+Qwen2:1.5b is a large language model developed by Alibaba Cloud.
+This project uses the model locally via Ollama for language generation.
+
+Use of the model is subject to the terms and conditions of the Qwen License Agreement.
+Users must comply with the license provided by the model publisher.
+
+---
+
+## SQLite
+
+Project: SQLite
+License: Public Domain
+Source: https://www.sqlite.org
+
+SQLite is public domain software. It is included in this product for local storage.
+
+---
+
+## SQLAlchemy
+
+Project: SQLAlchemy
+License: MIT License
+Source: https://www.sqlalchemy.org
+
+Copyright (c) 2005–present, Mike Bayer
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the “Software”), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, subject to the conditions of the MIT License.
+
+---
+
+## Polars
+
+Project: Polars
+License: Apache License 2.0
+Source: https://github.com/pola-rs/polars
+
+Copyright (c) 2019–present, Ritchie Vink and contributors
+
+Polars is used in this product for high-performance data processing.
+Licensed under the Apache License, Version 2.0.
+
+---
+
+## Docker
+
+Project: Docker Engine
+License: Apache License 2.0
+Source: https://github.com/docker/docker-ce
+
+Docker is used for containerized deployment. Licensed under the Apache License 2.0.
+
+---
+
+Pydantic
+
+Project: Pydantic
+License: MIT License
+Source: https://github.com/pydantic/pydantic
+
+Copyright (c) 2017–present, Samuel Colvin and contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the “Software”), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, subject to the conditions of the MIT License.
+
+---
+
+## sentence-transformers
+
+Project: sentence-transformers
+License: Apache License 2.0
+Source: https://github.com/UKPLab/sentence-transformers
+
+Copyright (c) 2019–present, UKPLab
+
+Licensed under the Apache License, Version 2.0 (the “License”).
+You may obtain a copy of the License at:
+https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed
+under the License is distributed on an “AS IS” BASIS, WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND.
+
+---
+
+## PyTorch (torch)
+
+Project: PyTorch
+License: BSD-style License
+Source: https://github.com/pytorch/pytorch
+
+Copyright (c) 2016–present, Facebook, Inc. and contributors
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the conditions of the BSD license are met.
+
+---
+
+## Uvicorn
+
+Project: Uvicorn
+License: BSD License
+Source: https://github.com/encode/uvicorn
+
+Copyright (c) 2017–present, Tom Christie and contributors
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the conditions of the BSD license are met.
+
+---
+
+## NumPy
+
+Project: NumPy
+License: BSD License
+Source: https://numpy.org
+
+Copyright (c) 2005–present, NumPy Developers
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the conditions of the BSD license are met.
+
+---
+
+## requests
+
+Project: requests
+License: Apache License 2.0
+Source: https://github.com/psf/requests
+
+Copyright (c) 2011–present, Kenneth Reitz
+
+Licensed under the Apache License, Version 2.0.
+You may obtain a copy of the License at:
+https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed
+under the License is distributed on an “AS IS” BASIS, WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND.
+
+---
+
+## python-dotenv
+
+Project: python-dotenv
+License: BSD License
+Source: https://github.com/theskumar/python-dotenv
+
+Copyright (c) 2014–present, Saurabh Kumar
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the conditions of the BSD license are met.
+
+---
+
+## Qdrant Client
+
+Project: Qdrant Python Client
+License: Apache License 2.0
+Source: https://github.com/qdrant/qdrant-client
+
+Copyright (c) 2020–present, Qdrant Team
+
+Licensed under the Apache License, Version 2.0.
+You may obtain a copy of the License at:
+https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed
+under the License is distributed on an “AS IS” BASIS, WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND.
+
+---
+
+## Qdrant Server
+
+Project: Qdrant
+License: Apache License 2.0
+Source: https://github.com/qdrant/qdrant
+
+Copyright (c) 2020–present, Qdrant Team
+
+Licensed under the Apache License, Version 2.0.
+You may obtain a copy of the License at:
+https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed
+under the License is distributed on an “AS IS” BASIS, WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND.
+
+---
+
+## Additional Notes
+
+No source code of third-party components is modified or redistributed beyond what is permitted by their respective licenses.
+
+---
+
+© 2026 Aliona Sîrf. All rights reserved. 

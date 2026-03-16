@@ -309,9 +309,46 @@ Set `GENERATOR_MODE=stub` to use deterministic stub lessons instead of the LLM.
 
 ---
 
+## Third-Party Software
+
+This application uses the following third-party components:
+
+### Core Components
+
+Qdrant Server (Apache 2.0)
+Ollama
+Qwen2:1.5b model
+SQLite (Public Domain)
+Docker (Apache 2.0)
+
+### Python Libraries
+
+FastAPI (MIT)
+Pydantic (MIT)
+language-tool-python (LGPL 2.1+)
+SQLAlchemy (MIT)
+sentence-transformers (Apache 2.0)
+PyTorch (BSD-style)
+Uvicorn (BSD)
+NumPy (BSD)
+requests (Apache)
+python-dotenv (BSD)
+Polars (Apache 2.0)
+Qdrant Client (Apache 2.0)
+
+See THIRD_PARTY_LICENSES.txt for full license information.
+
+---
+
 ## License
 
 This project is licensed under the GPL-3.0 License — see the LICENSE file for details.
 
 This repository currently serves as a personal research and portfolio project.
 If you are interested in commercial use or collaboration, feel free to contact the author.
+
+---
+
+## Author
+
+© 2026 Aliona Sîrf. All rights reserved. 
