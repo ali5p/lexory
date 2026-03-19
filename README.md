@@ -17,7 +17,7 @@ Lexory is created to analyze and assess grammar gaps based on a user’s real-li
 
 It is designed to function like a personal tutor–copilot that can identify weaker areas by observing how you speak or by analyzing texts you write for any purpose, without requiring formal tests. It then attempts to teach you using different pedagogical approaches until it finds what works best for you.
 
-Qdrant collections behave as user repositories (after a pseudonymization process, of course).
+Qdrant collections behave as user repositories (TODO: add pseudonymization after LanguageTool, before vectorization).
 
 ### Pipeline
 
@@ -40,7 +40,7 @@ user text
 
 ### Current State
 
-Working prototype.
+Semi-functional prototype.
 
 Some retrieval logic is intentionally simplified while the system pipeline is being stabilized.
 
@@ -135,7 +135,7 @@ This change also depends on taxonomy stabilization.
 
 ### LearningSummaryBatch (Not Integrated Yet)
 
-LearningSummaryBatch is currently unused. It is planned to be part of the context assembly for lesson generation once the taxonomy is stabilized.
+LearningSummaryBatch is currently unused. It is planned to be part of the context assembly and the lesson generation logic once the taxonomy is stabilized.
 
 ---
 
