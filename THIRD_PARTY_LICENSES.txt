@@ -266,7 +266,3 @@ CONDITIONS OF ANY KIND.
 ## Additional Notes
 
 No source code of third-party components is modified or redistributed beyond what is permitted by their respective licenses.
-
----
-
-© 2026 Aliona Sîrf. All rights reserved. 

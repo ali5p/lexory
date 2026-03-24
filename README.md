@@ -351,4 +351,4 @@ If you are interested in commercial use or collaboration, feel free to contact t
 
 ## Author
 
-© 2026 Aliona Sîrf. All rights reserved. 
+© 2026 Aliona Sîrf
