@@ -1,9 +1,11 @@
 """LanguageTool-based mistake detection pipeline."""
+import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 
-import os
+import requests
 
 try:
     from language_tool_python import LanguageTool, LanguageToolPublicAPI
@@ -16,6 +18,44 @@ from rag.utils.assets import load_languagetool_mapping
 from rag.utils.mistake_logic_vector import generate_mistake_logic_vector
 from rag.utils.rule_id_normalizer import normalize_rule_id
 from rag.utils.sentence_splitter import split_sentences
+
+_lt_log = logging.getLogger(__name__)
+
+
+def create_language_tool() -> Optional[Any]:
+    """
+    Build a LanguageTool instance: remote server (LANGUAGETOOL_URL) first, else public API.
+    Returns None if language_tool_python is unavailable or both paths fail.
+    """
+    if LanguageTool is None and LanguageToolPublicAPI is None:
+        return None
+    lt_url = os.environ.get("LANGUAGETOOL_URL", "").strip()
+    if lt_url and LanguageTool is not None:
+        try:
+            return LanguageTool("en-US", remote_server=lt_url.rstrip("/"))
+        except (requests.RequestException, ConnectionError, TimeoutError, OSError) as e:
+            _lt_log.info(
+                "LanguageTool remote server unavailable (%s), trying public API",
+                e,
+            )
+        except Exception as e:
+            _lt_log.warning(
+                "LanguageTool remote init failed: %s",
+                e,
+                exc_info=True,
+            )
+    if LanguageToolPublicAPI is not None:
+        try:
+            return LanguageToolPublicAPI("en-US")
+        except (requests.RequestException, ConnectionError, TimeoutError, OSError) as e:
+            _lt_log.warning("LanguageTool public API unavailable: %s", e)
+        except Exception as e:
+            _lt_log.warning(
+                "LanguageTool public API init failed: %s",
+                e,
+                exc_info=True,
+            )
+    return None
 
 
 def process_text(
@@ -49,17 +89,7 @@ def process_text(
         raise ImportError("language_tool_python not available")
 
     if lt_tool is None:
-        lt_url = os.environ.get("LANGUAGETOOL_URL", "").strip()
-        if lt_url and LanguageTool is not None:
-            try:
-                lt_tool = LanguageTool("en-US", remote_server=lt_url.rstrip("/"))
-            except Exception:
-                lt_tool = None
-        if lt_tool is None and LanguageToolPublicAPI is not None:
-            try:
-                lt_tool = LanguageToolPublicAPI("en-US")
-            except Exception:
-                lt_tool = None
+        lt_tool = create_language_tool()
     if lt_tool is None:
         raise ImportError("LanguageTool is unavailable. Check LANGUAGETOOL_URL or internet connection.")
     

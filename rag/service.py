@@ -3,12 +3,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, TYPE_CHECKING
 
-try:
-    from language_tool_python import LanguageTool, LanguageToolPublicAPI
-except ImportError:
-    LanguageTool = None
-    LanguageToolPublicAPI = None
-
 if TYPE_CHECKING:
     from batch.learning_summaries import InMemorySQLStore
 
@@ -23,7 +17,7 @@ from rag.approaches.default import DefaultApproach
 from rag.approaches.example_based import ExampleBasedApproach
 from rag.approaches.rule_based import RuleBasedApproach
 from rag.embedder import Embedder
-from rag.pipelines.languagetool_pipeline import process_text
+from rag.pipelines.languagetool_pipeline import create_language_tool, process_text
 from storage.example_imprints import ExampleImprintStore
 from vectorstore.qdrant_client import QdrantStore
 
@@ -116,19 +110,7 @@ class RAGService:
             "example_based": ExampleBasedApproach(),
             "default": DefaultApproach(),
         }
-        # Initialize LanguageTool: prefer remote server (no rate limits), else public API
-        lt_url = os.environ.get("LANGUAGETOOL_URL", "").strip()
-        self.lt_tool = None
-        if lt_url and LanguageTool is not None:
-            try:
-                self.lt_tool = LanguageTool("en-US", remote_server=lt_url.rstrip("/"))
-            except Exception:
-                pass
-        if self.lt_tool is None and LanguageToolPublicAPI is not None:
-            try:
-                self.lt_tool = LanguageToolPublicAPI("en-US")
-            except Exception:
-                pass
+        self.lt_tool = create_language_tool()
 
     def ingest_user_text(
         self, user_text: UserText

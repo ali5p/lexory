@@ -17,4 +17,6 @@ COPY . .
 
 EXPOSE 8000
 
-CMD ["uv", "run", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# No --reload: bind mount .:/app includes qdrant_storage/; StatReload races with Qdrant temp files (FileNotFoundError).
+# For local dev with reload: run uvicorn on the host or override CMD.
+CMD ["uv", "run", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING, List, Optional
+
+import requests
 
 from core.models import ContextAssembly
 from .base import BaseApproach
 
 if TYPE_CHECKING:
     from llm.base import BaseLLM
+
+_log = logging.getLogger(__name__)
 
 _PROMPT_TEMPLATE = """You are generating a short English grammar lesson.
 
@@ -79,7 +84,26 @@ class RuleBasedApproach(BaseApproach):
 
         try:
             response_text = self.llm.generate(prompt)
+        except requests.RequestException as e:
+            err_msg = f"LLM generation failed: {e!s}"
+            self._last_llm_result = {
+                "topic": "error",
+                "explanation": err_msg,
+                "exercises": [],
+                "approach_type": "llm_error",
+            }
+            return err_msg
+        except (KeyError, ValueError, TypeError) as e:
+            err_msg = f"LLM generation failed: invalid response ({e!s})"
+            self._last_llm_result = {
+                "topic": "error",
+                "explanation": err_msg,
+                "exercises": [],
+                "approach_type": "llm_error",
+            }
+            return err_msg
         except Exception as e:
+            _log.exception("LLM generation failed")
             err_msg = f"LLM generation failed: {e!s}"
             self._last_llm_result = {
                 "topic": "error",

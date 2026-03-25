@@ -9,14 +9,19 @@ services:
     environment:
       GENERATOR_MODE: ${GENERATOR_MODE:-llm}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2:1.5b}
-      OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434/api/generate}
-      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
-      LANGUAGETOOL_URL: ${LANGUAGETOOL_URL:-http://languagetool:8010}
       HF_TOKEN: ${HF_TOKEN:-}
+      # Use service hostnames here — not localhost. A host .env with
+      # QDRANT_URL=http://localhost:6333 would break Lexory-in-Docker (localhost = this container).
+      QDRANT_URL: http://qdrant:6333
+      OLLAMA_URL: http://ollama:11434/api/generate
+      LANGUAGETOOL_URL: http://languagetool:8010
     depends_on:
-      - qdrant
-      - ollama
-      - languagetool
+      qdrant:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+      languagetool:
+        condition: service_started
 
   qdrant:
     image: qdrant/qdrant:latest
@@ -24,6 +29,13 @@ services:
       - "6333:6333"
     volumes:
       - ./qdrant_storage:/qdrant/storage
+    # TCP check (no curl/wget required in image); aligns with HTTP readiness on 6333.
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 2s bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
 
   ollama:
     image: ollama/ollama:latest

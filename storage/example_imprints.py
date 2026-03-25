@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 from sqlalchemy import create_engine, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 
@@ -67,7 +68,7 @@ class ExampleImprintStore:
             session.add(imprint)
             try:
                 session.commit()
-            except Exception:
+            except SQLAlchemyError:
                 session.rollback()
                 raise
 
