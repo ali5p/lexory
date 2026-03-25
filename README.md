@@ -294,18 +294,40 @@ docker compose exec ollama ollama pull qwen2:1.5b
 
 Set `GENERATOR_MODE=stub` to use deterministic stub lessons instead of the LLM.
 
-**Troubleshooting:** If you see "Connection refused" to Ollama, ensure the model is pulled and that `OLLAMA_URL` is not set to `localhost` in `.env` (when using Docker, the app auto-corrects localhost to the `ollama` service if `QDRANT_URL` is set).
+**Troubleshooting:** If the LLM fails with connection errors, pull the model and check the **ollama** logs. If Lexory cannot reach Qdrant on startup, use the bundled `docker-compose.yml` as-is (service URLs are fixed there). For **uvicorn on the host** with backends in Docker, use `.env` / `.env.example` with `http://localhost:…` on the published ports.
 
 ### Environment variables
 
-| Variable        | Default                          | Description                    |
-|----------------|----------------------------------|--------------------------------|
-| `GENERATOR_MODE` | `llm`                           | `llm` (default) or `stub`      |
-| `OLLAMA_MODEL` | `qwen2:1.5b`                     | Ollama model name              |
-| `OLLAMA_URL` | `http://ollama:11434/api/generate` | Ollama API URL                 |
-| `QDRANT_URL` | `http://qdrant:6333`             | Qdrant URL (used when set)     |
-| `HF_TOKEN`   | *(optional)*                     | Hugging Face token for higher rate limits |
-| `LANGUAGETOOL_URL` | `http://languagetool:8010` | LanguageTool server URL (Docker: local container; omit for public API) |
+With **`docker compose`**, the **lexory** service receives **`QDRANT_URL`**, **`OLLAMA_URL`**, and **`LANGUAGETOOL_URL`** from `docker-compose.yml` (Docker network hostnames). **`GENERATOR_MODE`**, **`OLLAMA_MODEL`**, and **`HF_TOKEN`** still come from your environment (e.g. `.env` in the project directory). When you run the app **locally** (not in Compose), unset `QDRANT_URL` for embedded Qdrant or set URLs yourself; see `.env.example` for localhost examples.
+
+| Variable | Lexory-in-Docker | Description |
+|----------|------------------|-------------|
+| `GENERATOR_MODE` | From `.env` / default `llm` | `llm` or `stub` |
+| `OLLAMA_MODEL` | From `.env` / default `qwen2:1.5b` | Ollama model name |
+| `OLLAMA_URL` | Fixed in `docker-compose.yml` | `http://ollama:11434/api/generate` |
+| `QDRANT_URL` | Fixed in `docker-compose.yml` | `http://qdrant:6333` |
+| `LANGUAGETOOL_URL` | Fixed in `docker-compose.yml` | `http://languagetool:8010` |
+
+---
+
+## Using the API via Swagger UI
+
+### 1. Open Swagger UI
+<img src="docs/screenshots/swagger_ui/0.png" width="600"/>
+
+Click “Try it out”.
+
+
+### 2. Send a request
+<img src="docs/screenshots/swagger_ui/1.png" width="600"/>
+
+Fill out fields `text` and `user_id`, then click “Execute”.
+
+
+### 3. Get the response
+<img src="docs/screenshots/swagger_ui/2.png" width="600"/>
+
+The LLM response is returned in the properties `topic`, `explanation`, and `exercise`.
 
 ---
 
