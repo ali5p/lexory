@@ -11,3 +11,7 @@ ollama/
 *.db
 *.sqlite
 *.sqlite3
+
+# Local LanguageTool tree (LGPL). Do not commit upstream rule XML; use the LT server
+# (Docker/public API) or download releases from https://languagetool.org/ — see THIRD_PARTY_LICENSES.txt.
+vendor/languagetool/
