@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from core.models import ContextAssembly
 
@@ -12,7 +12,7 @@ class BaseApproach(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def generate_exercises(self, primary_mistake_context: Optional[dict]) -> List[str]:
+    def generate_exercises(self, primary_mistake_context: Optional[Any]) -> List[str]:
         raise NotImplementedError
 
 

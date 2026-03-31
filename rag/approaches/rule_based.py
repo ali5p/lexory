@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 
 import requests
 
@@ -73,8 +73,8 @@ class RuleBasedApproach(BaseApproach):
         example_sentence = ""
         if context.detected_mistake_examples:
             p = context.detected_mistake_examples[0]
-            rule_message = p.get("rule_message", "") or ""
-            examples = p.get("examples", [])
+            rule_message = p.rule_message or ""
+            examples = p.examples
             example_sentence = (examples[0] if examples else "") or ""
 
         prompt = _PROMPT_TEMPLATE.format(
@@ -176,12 +176,16 @@ class RuleBasedApproach(BaseApproach):
             parts.append(f"Topic: {topic}")
         return " ".join(parts)[:500]
 
-    def generate_exercises(self, primary_mistake_context: Optional[dict]) -> List[str]:
+    def generate_exercises(self, primary_mistake_context: Optional[Any]) -> List[str]:
         if self.llm and self._last_llm_result:
             return self._last_llm_result.get("exercises", [])
         exercises: List[str] = []
         if primary_mistake_context:
-            examples = primary_mistake_context.get("examples", [])
+            examples = (
+                primary_mistake_context.examples
+                if hasattr(primary_mistake_context, "examples")
+                else (primary_mistake_context.get("examples", []) if isinstance(primary_mistake_context, dict) else [])
+            )
             if examples:
                 for example in examples[:2]:
                     exercises.append(f"Practice: {example}")

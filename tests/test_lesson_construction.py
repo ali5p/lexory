@@ -2,7 +2,7 @@
 import pytest
 from unittest.mock import Mock
 
-from core.models import ContextAssembly
+from core.models import ContextAssembly, DetectedMistakeExample
 from rag.service import RAGService
 from rag.embedder import Embedder
 from vectorstore.qdrant_client import QdrantStore
@@ -38,7 +38,9 @@ def test_construct_lesson_stub_returns_valid_structure(
     monkeypatch.setenv("GENERATOR_MODE", "stub")
 
     context = ContextAssembly(
-        detected_mistake_examples=[{"mistake_type": "SUBJECT_VERB_AGREEMENT"}],
+        detected_mistake_examples=[
+            DetectedMistakeExample(mistake_type="SUBJECT_VERB_AGREEMENT")
+        ],
         recently_used_explanations=[],
         long_term_dynamics=[],
     )

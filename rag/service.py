@@ -8,6 +8,7 @@ if TYPE_CHECKING:
 
 from core.models import (
     ContextAssembly,
+    DetectedMistakeExample,
     ExerciseAttempt,
     LessonResponse,
     UserText,
@@ -249,8 +250,9 @@ class RAGService:
         - source == "exercise_attempt" (AI-generated text, avoid semantic pollution)
         - mistake_type in ("other", "style") (excluded from lessons; only track in occurrences)
         
-        When out_session_candidates is provided and event passes category check,
-        appends a candidate point before semantic dedup (for query embedding).
+        When out_session_candidates is provided and event passes the category check,
+        append one session candidate (vectors + payload) for this request's lesson
+        query embedding. 
         
         Returns:
             (example_point, occurrence_point) - either can be None
@@ -595,17 +597,18 @@ class RAGService:
 
         return self._get_fallback_point(user_id)
 
-    def _payload_to_detected_example(self, payload: dict) -> dict:
+    def _payload_to_detected_example(self, payload: dict) -> DetectedMistakeExample:
         """Format point payload for ContextAssembly detected_mistake_examples."""
         mistake_type = payload.get("mistake_type", "")
-        canonical = payload.get("text", payload.get("text", ""))
-        return {
-            "mistake_id": payload.get("mistake_id"),
-            "mistake_type": mistake_type,
-            "description": self._mistake_type_to_description(mistake_type),
-            "examples": [canonical] if canonical else [],
-            "rule_message": payload.get("rule_message", ""),
-        }
+        canonical = payload.get("text", "") or ""
+        return DetectedMistakeExample(
+            mistake_id=payload.get("mistake_id"),
+            rule_id=str(payload.get("rule_id", "") or ""),
+            mistake_type=mistake_type,
+            description=self._mistake_type_to_description(mistake_type),
+            examples=[canonical] if canonical else [],
+            rule_message=str(payload.get("rule_message", "") or ""),
+        )
 
     def _retrieve_staged_context(
         self,
@@ -822,9 +825,9 @@ class RAGService:
 
         # Extract mistake_types from detected_mistake_examples
         mistake_types_covered = [
-            p.get("mistake_type")
+            p.mistake_type
             for p in context.detected_mistake_examples
-            if p.get("mistake_type")
+            if p.mistake_type
         ]
 
         pedagogy_tags = self._pedagogy_tags_for_lesson()
@@ -895,7 +898,7 @@ class RAGService:
             if artifact.get("approach_type")
         }
 
-        primary_mistake_context = (
+        primary_mistake_context: Optional[DetectedMistakeExample] = (
             context.detected_mistake_examples[0] if context.detected_mistake_examples else None
         )
 
@@ -926,10 +929,12 @@ class RAGService:
         )
 
     def _extract_topic(
-        self, primary_mistake_context: Optional[dict], primary_summary: Optional[dict]
+        self,
+        primary_mistake_context: Optional[DetectedMistakeExample],
+        primary_summary: Optional[dict],
     ) -> str:
         if primary_mistake_context:
-            desc = primary_mistake_context.get("description", "")
+            desc = primary_mistake_context.description
             if desc:
                 return desc.split(".")[0].strip()[:100]
 

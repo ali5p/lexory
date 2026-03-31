@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Optional, List, Dict
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class UserText(BaseModel):
@@ -61,8 +61,25 @@ class SubmitResponse(BaseModel):
     status: str
 
 
+class DetectedMistakeExample(BaseModel):
+    """Primary mistake surfaced in submit response context (for API / debugging)."""
+
+    mistake_id: Optional[str] = None
+    rule_id: str = Field(
+        default="",
+        description="LanguageTool rule id after normalization (what LT reports for this match).",
+    )
+    mistake_type: str = Field(
+        default="",
+        description="Internal Lexory category from languagetool_to_mistaketype mapping.",
+    )
+    description: str = ""
+    examples: List[str] = Field(default_factory=list)
+    rule_message: str = ""
+
+
 class ContextAssembly(BaseModel):
-    detected_mistake_examples: List[Dict]
+    detected_mistake_examples: List[DetectedMistakeExample]
     long_term_dynamics: List[Dict]
     recently_used_explanations: List[Dict]
 
