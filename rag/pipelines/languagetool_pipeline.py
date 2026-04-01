@@ -3,7 +3,7 @@ import logging
 import os
 import uuid
 from datetime import datetime, timezone
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 
 import requests
 
@@ -20,6 +20,38 @@ from rag.utils.rule_id_normalizer import normalize_rule_id
 from rag.utils.sentence_splitter import split_sentences
 
 _lt_log = logging.getLogger(__name__)
+
+
+def _lt_rule_id_raw(match: Any) -> str:
+    v = getattr(match, "rule_id", None) or getattr(match, "ruleId", None)
+    if v is None:
+        return ""
+    return str(v).strip()
+
+
+def _mistake_type_and_stored_rule_id(
+    rule_mapping: Dict[str, str], raw_rule_id: str
+) -> Tuple[str, str]:
+    """
+    Resolve mistake_type from assets. Order of lookup:
+    1) exact string from LanguageTool (handles keys like in_excess_of in JSON)
+    2) lowercased raw (handles IN_EXCESS_OF vs in_excess_of)
+    3) normalized id (uppercase, strip [N]; handles TOT_HE[1] -> TOT_HE)
+
+    Stored rule_id is the stripped LT value so APIs show what the checker returned.
+    """
+    r = raw_rule_id.strip() if raw_rule_id else ""
+    if not r:
+        return "unlisted", ""
+    normalized = normalize_rule_id(r)
+    mistake_type = (
+        rule_mapping.get(r)
+        or rule_mapping.get(r.lower())
+        or rule_mapping.get(normalized)
+    )
+    if mistake_type is None:
+        mistake_type = "unlisted"
+    return mistake_type, r
 
 
 def create_language_tool() -> Optional[Any]:
@@ -108,12 +140,16 @@ def process_text(
         seen_rule_ids: set = set()
         
         for match in matches:
-            rule_id = normalize_rule_id(getattr(match, "rule_id", None) or getattr(match, "ruleId", None))
-            if not rule_id or rule_id in seen_rule_ids:
+            raw_id = _lt_rule_id_raw(match)
+            norm_for_dedup = normalize_rule_id(raw_id)
+            dedup_key = norm_for_dedup if norm_for_dedup else raw_id
+            if not dedup_key or dedup_key in seen_rule_ids:
                 continue
-            seen_rule_ids.add(rule_id)
-            
-            mistake_type = rule_mapping.get(rule_id, "unlisted")
+            seen_rule_ids.add(dedup_key)
+
+            mistake_type, rule_id = _mistake_type_and_stored_rule_id(rule_mapping, raw_id)
+            if not rule_id:
+                continue
             mistake_id = str(uuid.uuid4())
             
             # Rule message from LanguageTool (for lesson context). Only for non-other/non-style.

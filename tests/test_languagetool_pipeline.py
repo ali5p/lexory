@@ -1,7 +1,7 @@
 """Tests for LanguageTool pipeline."""
 import pytest
 from datetime import datetime, timezone
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 from rag.embedder import Embedder
 from rag.pipelines.languagetool_pipeline import process_text
@@ -40,18 +40,18 @@ def mock_lt_tool():
 
 
 def test_process_text_no_mistakes(mock_embedder):
-    """Test A: Text with no mistakes returns empty list."""
-    with patch("rag.pipelines.languagetool_pipeline.LanguageTool", MockLanguageTool):
-        events = process_text(
-            text="He goes to school.",
-            user_id="user-123",
-            user_text_id="text-001",
-            session_id="session-456",
-            timestamp=datetime.now(timezone.utc),
-            embedder=mock_embedder,
-            source="raw_text",
-        )
-        assert len(events) == 0
+    """Text with no mistakes returns empty list (use mock LT to avoid real API)."""
+    events = process_text(
+        text="He goes to school.",
+        user_id="user-123",
+        user_text_id="text-001",
+        session_id="session-456",
+        timestamp=datetime.now(timezone.utc),
+        embedder=mock_embedder,
+        source="raw_text",
+        lt_tool=MockLanguageTool(),
+    )
+    assert len(events) == 0
 
 
 def test_process_text_with_mistake(mock_embedder, mock_lt_tool):
@@ -128,8 +128,62 @@ def test_process_text_multiple_sentences(mock_embedder, mock_lt_tool):
     assert all(e["user_text_id"] == "text-002" for e in events)
 
 
+def test_process_text_bracketed_rule_id_maps_via_normalize(mock_embedder):
+    """Mapping keys are base ids; LT may return TOT_HE[1]. Stored rule_id stays bracketed."""
+    mock_lt = MockLanguageTool()
+
+    def check_bracket(text):
+        match = Mock()
+        match.rule_id = "TOT_HE[1]"
+        match.message = ""
+        return [match]
+
+    mock_lt.check = check_bracket
+    test_timestamp = datetime.now(timezone.utc)
+    events = process_text(
+        text="Some text.",
+        user_id="user-123",
+        user_text_id="text-bracket",
+        session_id=None,
+        timestamp=test_timestamp,
+        embedder=mock_embedder,
+        source="raw_text",
+        lt_tool=mock_lt,
+    )
+    assert len(events) == 1
+    assert events[0]["mistake_type"] == "unmapped"
+    assert events[0]["rule_id"] == "TOT_HE[1]"
+
+
+def test_process_text_rule_id_mapping_fallback_lowercase_json_key(mock_embedder):
+    """LT may return UPPER_SNAKE while the only mapping key is lower_snake (e.g. in_excess_of)."""
+    mock_lt = MockLanguageTool()
+
+    def check_in_excess(text):
+        match = Mock()
+        match.rule_id = "IN_EXCESS_OF"
+        match.message = ""
+        return [match]
+
+    mock_lt.check = check_in_excess
+    test_timestamp = datetime.now(timezone.utc)
+    events = process_text(
+        text="Some text.",
+        user_id="user-123",
+        user_text_id="text-in-excess",
+        session_id=None,
+        timestamp=test_timestamp,
+        embedder=mock_embedder,
+        source="raw_text",
+        lt_tool=mock_lt,
+    )
+    assert len(events) == 1
+    assert events[0]["mistake_type"] == "style"
+    assert events[0]["rule_id"] == "IN_EXCESS_OF"
+
+
 def test_process_text_unknown_rule_id(mock_embedder):
-    """Test that unknown rule IDs map to 'other'."""
+    """Unknown rule IDs map to mistake_type unlisted."""
     mock_lt = MockLanguageTool()
     
     # Override check to return unknown rule
@@ -154,6 +208,6 @@ def test_process_text_unknown_rule_id(mock_embedder):
     )
     
     assert len(events) == 1
-    assert events[0]["mistake_type"] == "other"
+    assert events[0]["mistake_type"] == "unlisted"
     assert events[0]["user_text_id"] == "text-003"
     assert events[0]["timestamp"] == test_timestamp.isoformat()
