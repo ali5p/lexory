@@ -45,6 +45,6 @@ services:
       - ./ollama:/root/.ollama
 
   languagetool:
-    image: erikvl87/languagetool:latest
+    image: erikvl87/languagetool:6.7
     ports:
       - "8010:8010"

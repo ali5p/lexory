@@ -286,6 +286,11 @@ This starts:
 - **Ollama** – LLM service for lesson generation (default mode)
 - **LanguageTool** – Grammar checking at http://localhost:8010 (no rate limits; allow ~30s for Java to start)
 
+**Optional / maintainer-only files:**
+- `assets/languagetool_rule_ids_en_all.json` – full list of rule ids found in upstream English rule XMLs for the LT version that last regenerated the mapping (not read at runtime).
+- `assets/languagetool_rule_inventory_manifest.json` – which `en` rules tree and `--lt-ref` were used.
+To **bump** the LanguageTool server version: pin the Docker image tag to the matching [LanguageTool release](https://github.com/languagetool-org/languagetool/tags), sparse-clone that tag’s `languagetool-language-modules/.../rules/en` under `vendor/lt-en-rules` (gitignored; see `.gitignore`), then run `scripts/extract_languagetool_rule_ids.py` with the same `--lt-ref` and `--bulk-fill-mapping` as needed, and commit the updated JSON assets. 
+
 After the first start, pull a model:
 
 ```bash

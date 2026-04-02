@@ -1,0 +1,26 @@
+{
+  "generated_at": "2026-04-02T13:52:35.123553+00:00",
+  "lt_git_ref": "v6.7",
+  "rules_en_root": "C:\\Users\\42077\\Documents\\PythonPF\\lexory\\vendor\\lt-en-rules\\languagetool-language-modules\\en\\src\\main\\resources\\org\\languagetool\\rules\\en",
+  "scope_note": "IDs come from rule/rulegroup id attributes in all *.xml under this English rules tree (grammar, style, en-US/en-GB/…). LT may report additional ids from spelling, n-gram, or server-only rules not defined in these XMLs.",
+  "xml_files_scanned": 12,
+  "id_counts": {
+    "grammar": 2790,
+    "style": 305,
+    "all_unique": 3095
+  },
+  "ids_per_file": {
+    "en-AU\\grammar.xml": 1,
+    "en-CA\\grammar.xml": 2,
+    "en-GB\\grammar.xml": 22,
+    "en-GB\\style.xml": 4,
+    "en-NZ\\grammar.xml": 1,
+    "en-US\\grammar.xml": 23,
+    "en-US\\style.xml": 10,
+    "grammar-l2-de.xml": 2,
+    "grammar-l2-fr.xml": 1,
+    "grammar.xml": 2691,
+    "remote-rule-filters.xml": 51,
+    "style.xml": 291
+  }
+}
