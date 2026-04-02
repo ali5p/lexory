@@ -104,21 +104,6 @@ Once the system pipeline is stable, retrieval quality improvements are planned.
 
 # Known Issues / Tradeoffs
 
-### Taxonomy instability
-
-External grammar rules from LanguageTool sometimes produce **unmapped rule_id values**.
-
-Currently these are routed to a fallback category (`other`).
-
-Planned solution:
-
-- introduce an interactive mapper that converts LanguageTool rule messages into internal `mistake_type` categories
-- stabilize the taxonomy in `languagetool_to_mistaketype.json`
-
-Because `mistake_type` is used to generate deterministic **mistake_logic vectors**, taxonomy stabilization is required before expanding the semantic RAG logic.
-
----
-
 ### Retrieval bug
 
 `recently_used_explanations` currently returns an empty list due to an issue in `_retrieve_lesson_artifacts`.
@@ -128,8 +113,6 @@ Planned fix:
 - switch to Named Vectors with 64-dim `mistake_logic` vector + 384-dim artifact_vector or single `mistake_logic` vector + lesson artifacts in payload 
 - retrieve by `mistake_logic` vector first
 - then filter by most recent examples
-
-This change also depends on taxonomy stabilization.
 
 ---
 
