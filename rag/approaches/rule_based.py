@@ -14,30 +14,59 @@ if TYPE_CHECKING:
 
 _log = logging.getLogger(__name__)
 
-_PROMPT_TEMPLATE = """You are generating a short English grammar lesson.
+# Ollama structured output: JSON Schema for lesson payload (keys match historical prompt).
+LESSON_RESPONSE_JSON_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "topic": {"type": "string", "description": "Short grammar topic title."},
+        "lesson": {
+            "type": "string",
+            "description": "Brief explanation suitable for a learner.",
+        },
+        "exercise": {
+            "type": "string",
+            "description": "One short practice prompt similar to the user's mistake.",
+        },
+    },
+    "required": ["topic", "lesson", "exercise"],
+}
 
-Input:
+_SYSTEM_LESSON_INSTRUCTIONS = """You are an English teacher. Your task is to produce ONE short grammar lesson as structured JSON only.
 
-Rule message from a grammar checker: {rule_message}
+The user message will contain:
+- A rule message from a grammar checker (hint).
+- A user sentence that contains the mistake.
 
-User sentence that contains the mistake: {example_sentence}
+Steps:
+1. Identify the mistake using the rule message and the sentence.
+2. Choose a clear grammar topic name.
+3. Write a concise lesson (plain language).
+4. Write one short exercise (similar style to the user's sentence).
+5. If the rule message is vague, infer the topic mainly from the sentence.
 
-Tasks:
+Respond with JSON only (no markdown, no preamble). Use exactly these keys: topic, lesson, exercise.
 
-1. Identify the grammatical mistake in the sentence using the rule message as a hint.
-2. Determine the grammar topic related to this mistake.
-3. Write a short lesson explaining this grammar topic.
-4. Create one short exercise similar to the user's sentence.
-5. If the rule message is vague, focus mainly on the sentence to determine the topic.
+Examples of the required shape (follow closely):
 
-Return JSON:
-
-{{
-"topic": "",
-"lesson": "",
-"exercise": ""
-}}
+---
+Rule message: Did you mean "it's" (it is)?
+User sentence: Its a sunny day today.
+JSON:
+{"topic": "It's vs its", "lesson": "Use it's (with apostrophe) for it is or it has. Use its (no apostrophe) for possession, like his or hers.", "exercise": "Fill in: _____ (Its/It's) going to rain later."}
+---
+Rule message: Use third-person singular verb with he/she/it.
+User sentence: He walk to school every day.
+JSON:
+{"topic": "Subject–verb agreement (he/she/it)", "lesson": "With he, she, or it, the present simple verb usually takes -s: he walks, she runs, it works.", "exercise": "Correct this: She study history on Tuesdays."}
+---
 """
+
+
+def _user_message(rule_message: str, example_sentence: str) -> str:
+    return (
+        f"Rule message from grammar checker:\n{rule_message or '(none)'}\n\n"
+        f"User sentence with the mistake:\n{example_sentence or '(none)'}\n"
+    )
 
 
 def _extract_json(text: str) -> Optional[str]:
@@ -57,7 +86,21 @@ def _extract_json(text: str) -> Optional[str]:
     return None
 
 
+def _parse_lesson_json(response_text: str) -> Optional[dict]:
+    text = response_text.strip()
+    for candidate in (text, _extract_json(response_text) or ""):
+        if not candidate:
+            continue
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
 class RuleBasedApproach(BaseApproach):
+    """LLM path uses chat API + optional JSON schema; rule path uses LT strings only."""
+
     def __init__(self, llm: Optional["BaseLLM"] = None):
         self.llm = llm
         self._last_llm_result: dict = {}
@@ -77,13 +120,17 @@ class RuleBasedApproach(BaseApproach):
             examples = p.examples
             example_sentence = (examples[0] if examples else "") or ""
 
-        prompt = _PROMPT_TEMPLATE.format(
-            rule_message=rule_message,
-            example_sentence=example_sentence,
-        )
+        messages = [
+            {"role": "system", "content": _SYSTEM_LESSON_INSTRUCTIONS},
+            {"role": "user", "content": _user_message(rule_message, example_sentence)},
+        ]
 
         try:
-            response_text = self.llm.generate(prompt)
+            response_text = self.llm.chat(
+                messages,
+                temperature=0.0,
+                json_schema=LESSON_RESPONSE_JSON_SCHEMA,
+            )
         except requests.RequestException as e:
             err_msg = f"LLM generation failed: {e!s}"
             self._last_llm_result = {
@@ -113,21 +160,9 @@ class RuleBasedApproach(BaseApproach):
             }
             return err_msg
 
-        json_str = _extract_json(response_text)
-        if not json_str:
+        parsed = _parse_lesson_json(response_text)
+        if not parsed:
             err_msg = "LLM generation failed: invalid JSON response"
-            self._last_llm_result = {
-                "topic": "error",
-                "explanation": err_msg,
-                "exercises": [],
-                "approach_type": "llm_error",
-            }
-            return err_msg
-
-        try:
-            parsed = json.loads(json_str)
-        except json.JSONDecodeError as e:
-            err_msg = f"LLM generation failed: invalid JSON response ({e!s})"
             self._last_llm_result = {
                 "topic": "error",
                 "explanation": err_msg,
@@ -151,19 +186,20 @@ class RuleBasedApproach(BaseApproach):
         self._last_llm_result = {
             "topic": str(parsed.get("topic", "")).strip() or topic,
             "explanation": str(parsed.get("lesson", "")).strip(),
-            "exercises": [str(parsed.get("exercise", "")).strip()] if parsed.get("exercise") else [],
+            "exercises": [str(parsed.get("exercise", "")).strip()]
+            if parsed.get("exercise")
+            else [],
             "approach_type": "llm",
         }
         return self._last_llm_result["explanation"]
 
     def _build_explanation_rule_based(self, context: ContextAssembly, topic: str) -> str:
-        self._last_llm_result = {}  # Clear so _construct_lesson does not use stale override
-        # Uses explicit mistake_type description and long-term context; matches prior behavior.
+        self._last_llm_result = {}
         parts: List[str] = []
         if context.detected_mistake_examples:
             p = context.detected_mistake_examples[0]
-            mistake_type_desc = p.get("description", "")
-            rule_message = p.get("rule_message", "")  # LanguageTool message for lesson context
+            mistake_type_desc = p.description
+            rule_message = p.rule_message
             if rule_message:
                 parts.append(f"LanguageTool: {rule_message}")
             elif mistake_type_desc:
@@ -184,7 +220,11 @@ class RuleBasedApproach(BaseApproach):
             examples = (
                 primary_mistake_context.examples
                 if hasattr(primary_mistake_context, "examples")
-                else (primary_mistake_context.get("examples", []) if isinstance(primary_mistake_context, dict) else [])
+                else (
+                    primary_mistake_context.get("examples", [])
+                    if isinstance(primary_mistake_context, dict)
+                    else []
+                )
             )
             if examples:
                 for example in examples[:2]:

@@ -277,7 +277,7 @@ To **bump** the LanguageTool server version: pin the Docker image tag to the mat
 After the first start, pull a model:
 
 ```bash
-docker compose exec ollama ollama pull qwen2:1.5b
+docker compose exec ollama ollama pull qwen2.5:1.5b-instruct
 ```
 
 Set `GENERATOR_MODE=stub` to use deterministic stub lessons instead of the LLM.
@@ -291,8 +291,10 @@ With **`docker compose`**, the **lexory** service receives **`QDRANT_URL`**, **`
 | Variable | Lexory-in-Docker | Description |
 |----------|------------------|-------------|
 | `GENERATOR_MODE` | From `.env` / default `llm` | `llm` or `stub` |
-| `OLLAMA_MODEL` | From `.env` / default `qwen2:1.5b` | Ollama model name |
-| `OLLAMA_URL` | Fixed in `docker-compose.yml` | `http://ollama:11434/api/generate` |
+| `OLLAMA_MODEL` | From `.env` / default `qwen2.5:1.5b-instruct` | Ollama model name |
+| `OLLAMA_URL` | Fixed in `docker-compose.yml` | `http://ollama:11434/api/generate` (Lexory calls **`/api/chat`** for lessons; the host/port are taken from this URL) |
+| `OLLAMA_STRUCTURED_OUTPUT` | From `.env` / default `1` | Set `0` if your Ollama build rejects JSON-schema **`format`** on chat |
+| `OLLAMA_TIMEOUT` | From `.env` / default `120` | Chat request timeout in seconds |
 | `QDRANT_URL` | Fixed in `docker-compose.yml` | `http://qdrant:6333` |
 | `LANGUAGETOOL_URL` | Fixed in `docker-compose.yml` | `http://languagetool:8010` |
 
@@ -327,7 +329,7 @@ This application uses the following third-party components:
 
 Qdrant Server (Apache 2.0)
 Ollama
-Qwen2:1.5b model
+Qwen2.5 1.5B Instruct (Ollama: `qwen2.5:1.5b-instruct`)
 SQLite (Public Domain)
 Docker (Apache 2.0)
 

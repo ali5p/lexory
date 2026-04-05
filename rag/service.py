@@ -638,7 +638,7 @@ class RAGService:
         Convert mistake_type to human-readable description.
         For V1, uses simple formatting. V2 can add taxonomy labels.
         """
-        # Replace underscores/dots with spaces and capitalize
+    
         return mistake_type.replace("_", " ").replace(".", " ").title()
 
 
