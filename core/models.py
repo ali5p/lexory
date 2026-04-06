@@ -44,7 +44,7 @@ class SessionContext(BaseModel):
 
 
 class SubmitRequest(BaseModel):
-    """Combined ingest + lesson: text (optional for fallback), user_id."""
+    """Combined ingest + lesson: text, user_id."""
 
     text: str = ""
     user_id: str
@@ -67,7 +67,7 @@ class DetectedMistakeExample(BaseModel):
     mistake_id: Optional[str] = None
     rule_id: str = Field(
         default="",
-        description="LanguageTool rule id after normalization (what LT reports for this match).",
+        description="LanguageTool rule id after normalization.",
     )
     mistake_type: str = Field(
         default="",
