@@ -56,12 +56,6 @@ class LessonArtifactRow(BaseModel):
     created_at: datetime
 
 
-class SessionRow(BaseModel):
-    id: str
-    user_id: str
-    started_at: datetime
-    ended_at: Optional[datetime]
-
 """
 class MistakeOccurrenceRow(BaseModel):
     user_id: str
@@ -79,7 +73,6 @@ class InMemorySQLStore:
         self.user_texts: List[Dict] = []
         self.mistake_occurrences: List[Dict] = []
         self.lesson_artifacts: List[Dict] = []
-        self.sessions: List[Dict] = []
         self.learning_summaries: List[Dict] = []
 
     def upsert_learning_summary(self, row: LearningSummaryRow) -> None:
@@ -118,7 +111,6 @@ class BatchInputs:
     user_texts: pl.DataFrame
     mistake_occurrences: pl.DataFrame
     lesson_artifacts: pl.DataFrame
-    sessions: pl.DataFrame
 
 
 class LearningSummaryBatch:
@@ -175,7 +167,6 @@ class LearningSummaryBatch:
             user_texts=self.sql_store.load_df("user_texts"),
             mistake_occurrences=self.sql_store.load_df("mistake_occurrences"),
             lesson_artifacts=self.sql_store.load_df("lesson_artifacts"),
-            sessions=self.sql_store.load_df("sessions"),
         )
 
     def _normalize_time(self, inputs: BatchInputs) -> BatchInputs:
@@ -191,7 +182,6 @@ class LearningSummaryBatch:
             user_texts=add_day(inputs.user_texts, "created_at"),
             mistake_occurrences=add_day(inputs.mistake_occurrences, "detected_at"),
             lesson_artifacts=add_day(inputs.lesson_artifacts, "created_at"),
-            sessions=add_day(inputs.sessions, "started_at"),
         )
 
     # ----- Joins -----
@@ -210,7 +200,7 @@ class LearningSummaryBatch:
             occ.join(texts, left_on="user_text_id", right_on="id", how="inner", suffix="_text")
         )
 
-        # Exclude exercise attempts from trend learning (keep only raw_text)
+        # Exclude exercise attempts from trend learning
         base = base.filter(pl.col("source") != "exercise_attempt")
 
         return base.select(
@@ -499,9 +489,8 @@ class LearningSummaryBatch:
     def _exposure_count_global(
         self, user_id: str, lesson_artifacts: pl.DataFrame, window_start, window_end
     ) -> int:
-        """
-        Count total lesson exposures (mistake_types covered) for global summaries.
-        """
+      
+        # Count total lesson exposures (mistake_types covered) for global summaries.
         if lesson_artifacts.is_empty():
             return 0
         df = lesson_artifacts.filter(
@@ -524,9 +513,8 @@ class LearningSummaryBatch:
         window_start,
         window_end,
     ) -> int:
-        """
-        Count lesson exposures for a specific mistake_type.
-        """
+        
+        # Count lesson exposures for a specific mistake_type.
         if lesson_artifacts.is_empty():
             return 0
         if "mistake_types_covered" in lesson_artifacts.columns:
