@@ -221,8 +221,11 @@ class RAGService:
 
     @staticmethod
     def _build_example_payload(event: dict) -> dict:
-        """Explicit whitelist for mistake_examples payload. No vectors."""
-        return {
+        """Explicit whitelist for mistake_examples payload. No vectors.
+        example_id is set when persisting an example (SQL row id / FK target); omitted for
+        session-candidate payloads before semantic dedup decides whether a row is written.
+        """
+        payload = {
             "mistake_id": event["mistake_id"],
             "user_id": event["user_id"],
             "user_text_id": event["user_text_id"],
@@ -235,6 +238,10 @@ class RAGService:
             "weight": event["weight"],
             "timestamp": event["timestamp"],
         }
+        eid = event.get("example_id")
+        if eid is not None:
+            payload["example_id"] = eid
+        return payload
 
     def _ingest_mistake_event(
         self,
@@ -245,18 +252,24 @@ class RAGService:
     ) -> tuple[Optional[dict], Optional[dict]]:
         """
         Deduplication workflow for mistake events.
-        
+
+        Qdrant point id for both mistake_occurrences and mistake_examples (when written)
+        is always event["mistake_id"] (one id per detection). The mistake_examples payload
+        also includes example_id (new UUID per stored example row) for SQL / FK separation
+        from the occurrence row.
+
         Skip example_point (mistake_examples) for:
         - source == "exercise_attempt" (AI-generated text, avoid semantic pollution)
         - mistake_type in ("other", "style") (excluded from lessons; only track in occurrences)
-        
+
         When out_session_candidates is provided and event passes the category check,
         append one session candidate (vectors + payload) for this request's lesson
-        query embedding. 
-        
+        query embedding.
+
         Returns:
             (example_point, occurrence_point) - either can be None
         """
+        event.setdefault("user_text_id", user_text_id)
         mistake_type = event["mistake_type"]
         context_vector = event["context_vector"]
         mistake_logic_vector = event["mistake_logic_vector"]
@@ -287,7 +300,7 @@ class RAGService:
             if self.sql_store is not None:
                 self.sql_store.mistake_occurrences.append(occurrence_data)
             return None, occurrence_point
-        
+
         # Stage 1: Category check - does this mistake_type exist for this user?
         dummy_vector = [0.0] * 64
         existing_examples = self.qdrant.search(
@@ -301,8 +314,9 @@ class RAGService:
         if not existing_examples:
             # No examples for this mistake_type - create both example and occurrence
             example_id = str(uuid.uuid4())
+            event["example_id"] = example_id
             example_point = {
-                "id": example_id,
+                "id": event["mistake_id"],
                 "vectors": {
                     "mistake_logic": mistake_logic_vector,
                     "context": context_vector,
@@ -314,7 +328,7 @@ class RAGService:
                 "vectors": {"mistake_logic": mistake_logic_vector},
                 "payload": self._build_occurrence_payload(event, lesson_artifact_id),
             }
-            
+
             # Persist occurrence to SQL placeholder
             occurrence_data = {
                 "user_id": event["user_id"],
@@ -324,13 +338,14 @@ class RAGService:
                 "source": event["source"],
                 "mistake_type": mistake_type,
                 "rule_id": event["rule_id"],
+                "example_id": example_id,
             }
             self.occurrence_store.insert(occurrence_data)
-            
+
             # Sync to SQL store for batch processing
             if self.sql_store is not None:
                 self.sql_store.mistake_occurrences.append(occurrence_data)
-            
+
             # Intercept: first example for this mistake_type is also a session candidate
             if out_session_candidates is not None:
                 out_session_candidates.append({
@@ -340,9 +355,9 @@ class RAGService:
                     },
                     "payload": self._build_example_payload(event),
                 })
-            
+
             return example_point, occurrence_point
-        
+
         # Intercept before Stage 2: candidate for session query embedding
         if out_session_candidates is not None:
             out_session_candidates.append({
@@ -373,7 +388,7 @@ class RAGService:
                 "vectors": {"mistake_logic": mistake_logic_vector},
                 "payload": self._build_occurrence_payload(event, lesson_artifact_id),
             }
-            
+
             self.occurrence_store.insert({
                 "user_id": event["user_id"],
                 "mistake_id": event["mistake_id"],
@@ -383,13 +398,13 @@ class RAGService:
                 "mistake_type": mistake_type,
                 "rule_id": event["rule_id"],
             })
-            
+
             return None, occurrence_point
-        
+
         # Low similarity or no results - create new example + occurrence
         example_id = str(uuid.uuid4())
         example_point = {
-            "id": example_id,
+            "id": event["mistake_id"],
             "vectors": {
                 "mistake_logic": mistake_logic_vector,
                 "context": context_vector,
@@ -401,8 +416,8 @@ class RAGService:
             "vectors": {"mistake_logic": mistake_logic_vector},
             "payload": self._build_occurrence_payload(event, lesson_artifact_id),
         }
-        
-        self.occurrence_store.insert({
+
+        occurrence_data = {
             "user_id": event["user_id"],
             "mistake_id": event["mistake_id"],
             "user_text_id": user_text_id,
@@ -410,8 +425,10 @@ class RAGService:
             "source": event["source"],
             "mistake_type": mistake_type,
             "rule_id": event["rule_id"],
-        })
-        
+            "example_id": example_id,
+        }
+        self.occurrence_store.insert(occurrence_data)
+
         return example_point, occurrence_point
 
     def submit_and_lesson(
@@ -600,13 +617,14 @@ class RAGService:
     def _payload_to_detected_example(self, payload: dict) -> DetectedMistakeExample:
         """Format point payload for ContextAssembly detected_mistake_examples."""
         mistake_type = payload.get("mistake_type", "")
-        canonical = payload.get("text", "") or ""
+        # Sentence span from the detector (payload "text"); lesson code reads examples[0].
+        example_text = payload.get("text", "") or ""
         return DetectedMistakeExample(
             mistake_id=payload.get("mistake_id"),
             rule_id=str(payload.get("rule_id", "") or ""),
             mistake_type=mistake_type,
             description=self._mistake_type_to_description(mistake_type),
-            examples=[canonical] if canonical else [],
+            examples=[example_text] if example_text else [],
             rule_message=str(payload.get("rule_message", "") or ""),
         )
 

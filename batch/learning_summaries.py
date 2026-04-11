@@ -47,7 +47,6 @@ class UserTextRow(BaseModel):
     created_at: datetime
 
 
-
 class LessonArtifactRow(BaseModel):
     id: str
     user_id: str
@@ -56,14 +55,13 @@ class LessonArtifactRow(BaseModel):
     created_at: datetime
 
 
-"""
 class MistakeOccurrenceRow(BaseModel):
     user_id: str
     mistake_id: str
     user_text_id: str
     mistake_type: str
     detected_at: datetime
-"""
+
 
 # ---------- In-memory SQL placeholder (authoritative) ----------
 class InMemorySQLStore:
