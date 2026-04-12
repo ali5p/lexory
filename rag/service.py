@@ -1,10 +1,9 @@
 import os
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Set, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Set
 
-if TYPE_CHECKING:
-    from batch.learning_summaries import InMemorySQLStore
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.models import (
     ContextAssembly,
@@ -19,12 +18,12 @@ from rag.approaches.example_based import ExampleBasedApproach
 from rag.approaches.rule_based import RuleBasedApproach
 from rag.embedder import Embedder
 from rag.pipelines.languagetool_pipeline import create_language_tool, process_text
-from storage.example_imprints import ExampleImprintStore
+from storage import repositories as repo
 from vectorstore.qdrant_client import QdrantStore
 
 
-class InMemoryTextStore:  # TODO replace with SQL storage
-    """Simulates SQL storage for raw user text (source of truth)."""
+class InMemoryTextStore:
+    """Session-scoped text buffer (kept until LanguageTool finishes processing)."""
 
     def __init__(self):
         self.texts: Dict[str, dict] = {}
@@ -45,57 +44,18 @@ class InMemoryTextStore:  # TODO replace with SQL storage
             "timestamp": timestamp.isoformat(),
         }
 
-    def get_by_user(self, user_id: str) -> List[dict]:
-        return [t for t in self.texts.values() if t["user_id"] == user_id]
-
-    def get_by_user_session(self, user_id: str, session_id: Optional[str]) -> List[dict]:
-        return [
-            t
-            for t in self.texts.values()
-            if t["user_id"] == user_id and (session_id is None or t["session_id"] == session_id)
-        ]
-
-
-class InMemoryArtifactStore:  # TODO replace with SQL storage
-    """Stores LessonArtifacts for non-repetition logic."""
-
-    def __init__(self):
-        self.artifacts: Dict[str, dict] = {}
-
-    def upsert(self, artifact_id: str, data: dict):
-        self.artifacts[artifact_id] = data
-
-    def get_by_user(self, user_id: str) -> List[dict]:
-        return [a for a in self.artifacts.values() if a["user_id"] == user_id]
-
-
-class InMemoryOccurrenceStore:  # TODO replace with SQL storage
-    """Stores mistake occurrences (authoritative)."""
-
-    def __init__(self):
-        self.occurrences: List[dict] = []
-
-    def insert(self, occurrence: dict):
-        self.occurrences.append(occurrence)
-
 
 class RAGService:
     def __init__(
         self,
         qdrant_store: QdrantStore,
         embedder: Embedder,
-        sql_store: Optional["InMemorySQLStore"] = None,
-        imprint_store: Optional[ExampleImprintStore] = None,
+        session_factory: async_sessionmaker[AsyncSession],
     ):
         self.qdrant = qdrant_store
         self.embedder = embedder
-        self.sql_store = sql_store  # Optional: syncs to batch processor's SQL store
-        self.imprint_store = imprint_store or ExampleImprintStore()
+        self.session_factory = session_factory
         self.text_store = InMemoryTextStore()
-        self.artifact_store = InMemoryArtifactStore()
-        self.occurrence_store = InMemoryOccurrenceStore()
-        self.exercise_attempts: List[dict] = []  # Event register: metadata only (no full text)
-        self.mistake_occurrences: List[dict] = []
         self.max_context_items = 10
         self.min_similarity_score = 0.5
         self.semantic_dedup_threshold = 0.9
@@ -113,7 +73,7 @@ class RAGService:
         }
         self.lt_tool = create_language_tool()
 
-    def ingest_user_text(
+    async def ingest_user_text(
         self, user_text: UserText
     ) -> tuple[str, str, List[dict]]:
         """
@@ -133,17 +93,6 @@ class RAGService:
             timestamp=user_text.timestamp,
         )
 
-        # Sync to SQL store for batch processing
-        if self.sql_store is not None:
-            self.sql_store.user_texts.append({
-                "id": user_text_id,
-                "user_text_id": user_text_id,
-                "text": user_text.text,
-                "user_id": user_text.user_id,
-                "session_id": session_id or "",
-                "timestamp": user_text.timestamp.isoformat(),
-            })
-
         session_candidate_points: List[dict] = []
 
         try:
@@ -161,25 +110,29 @@ class RAGService:
             example_points: List[dict] = []
             occurrence_points: List[dict] = []
 
-            for event in events:
-                example_point, occurrence_point = self._ingest_mistake_event(
-                    event=event,
-                    user_text_id=user_text_id,
-                    out_session_candidates=session_candidate_points,
-                )
-                if example_point:
-                    example_points.append(example_point)
-                if occurrence_point:
-                    occurrence_points.append(occurrence_point)
+            async with self.session_factory() as session:
+                for event in events:
+                    example_point, occurrence_point = await self._ingest_mistake_event(
+                        session=session,
+                        event=event,
+                        user_text_id=user_text_id,
+                        out_session_candidates=session_candidate_points,
+                    )
+                    if example_point:
+                        example_points.append(example_point)
+                    if occurrence_point:
+                        occurrence_points.append(occurrence_point)
 
-            if example_points:
-                self.qdrant.upsert("mistake_examples", example_points)
-                for ep in example_points:
-                    payload = ep.get("payload", {})
-                    if all(k in payload for k in ("mistake_id", "user_id", "session_id", "timestamp")):
-                        self.imprint_store.insert(payload)
-            if occurrence_points:
-                self.qdrant.upsert("mistake_occurrences", occurrence_points)
+                if example_points:
+                    self.qdrant.upsert("mistake_examples", example_points)
+                    for ep in example_points:
+                        payload = ep.get("payload", {})
+                        if all(k in payload for k in ("mistake_id", "user_id", "session_id", "timestamp")):
+                            await repo.insert_imprint(session, payload)
+                if occurrence_points:
+                    self.qdrant.upsert("mistake_occurrences", occurrence_points)
+
+                await session.commit()
         except ImportError:
             raise RuntimeError(
                 "LanguageTool is unavailable. Check your internet connection or try again later."
@@ -243,8 +196,9 @@ class RAGService:
             payload["example_id"] = eid
         return payload
 
-    def _ingest_mistake_event(
+    async def _ingest_mistake_event(
         self,
+        session: AsyncSession,
         event: dict,
         user_text_id: str,
         lesson_artifact_id: Optional[str] = None,
@@ -296,9 +250,7 @@ class RAGService:
             }
             if lesson_artifact_id:
                 occurrence_data["lesson_artifact_id"] = lesson_artifact_id
-            self.occurrence_store.insert(occurrence_data)
-            if self.sql_store is not None:
-                self.sql_store.mistake_occurrences.append(occurrence_data)
+            await repo.insert_occurrence(session, occurrence_data)
             return None, occurrence_point
 
         # Stage 1: Category check - does this mistake_type exist for this user?
@@ -329,7 +281,6 @@ class RAGService:
                 "payload": self._build_occurrence_payload(event, lesson_artifact_id),
             }
 
-            # Persist occurrence to SQL placeholder
             occurrence_data = {
                 "user_id": event["user_id"],
                 "mistake_id": event["mistake_id"],
@@ -340,11 +291,7 @@ class RAGService:
                 "rule_id": event["rule_id"],
                 "example_id": example_id,
             }
-            self.occurrence_store.insert(occurrence_data)
-
-            # Sync to SQL store for batch processing
-            if self.sql_store is not None:
-                self.sql_store.mistake_occurrences.append(occurrence_data)
+            await repo.insert_occurrence(session, occurrence_data)
 
             # Intercept: first example for this mistake_type is also a session candidate
             if out_session_candidates is not None:
@@ -389,7 +336,7 @@ class RAGService:
                 "payload": self._build_occurrence_payload(event, lesson_artifact_id),
             }
 
-            self.occurrence_store.insert({
+            await repo.insert_occurrence(session, {
                 "user_id": event["user_id"],
                 "mistake_id": event["mistake_id"],
                 "user_text_id": user_text_id,
@@ -403,6 +350,7 @@ class RAGService:
 
         # Low similarity or no results - create new example + occurrence
         example_id = str(uuid.uuid4())
+        event["example_id"] = example_id
         example_point = {
             "id": event["mistake_id"],
             "vectors": {
@@ -417,7 +365,7 @@ class RAGService:
             "payload": self._build_occurrence_payload(event, lesson_artifact_id),
         }
 
-        occurrence_data = {
+        await repo.insert_occurrence(session, {
             "user_id": event["user_id"],
             "mistake_id": event["mistake_id"],
             "user_text_id": user_text_id,
@@ -426,12 +374,11 @@ class RAGService:
             "mistake_type": mistake_type,
             "rule_id": event["rule_id"],
             "example_id": example_id,
-        }
-        self.occurrence_store.insert(occurrence_data)
+        })
 
         return example_point, occurrence_point
 
-    def submit_and_lesson(
+    async def submit_and_lesson(
         self, text: str, user_id: str
     ) -> tuple[Optional[str], str, str, "LessonResponse", "ContextAssembly"]:
         """
@@ -443,13 +390,13 @@ class RAGService:
 
         session_candidate_points: List[dict] = []
         if text and text.strip():
-            user_text_id, session_id, session_candidate_points = self.ingest_user_text(
+            user_text_id, session_id, session_candidate_points = await self.ingest_user_text(
                 UserText(text=text.strip(), user_id=user_id)
             )
         else:
             session_id = str(uuid.uuid4())
 
-        query_embedding, primary_example = self._get_query_embedding_and_primary_example(
+        query_embedding, primary_example = await self._get_query_embedding_and_primary_example(
             session_candidate_points=session_candidate_points,
             user_id=user_id,
         )
@@ -479,7 +426,7 @@ class RAGService:
             query_embedding, user_filter, primary_example
         )
         lesson = self._construct_lesson(context)
-        artifact_id = self._persist_lesson_artifact(
+        artifact_id = await self._persist_lesson_artifact(
             lesson=lesson,
             user_id=user_id,
             session_id=session_id,
@@ -489,11 +436,10 @@ class RAGService:
         return user_text_id, session_id, artifact_id, lesson, context
 
 
-    def process_exercise_attempt(self, attempt: ExerciseAttempt) -> dict:
+    async def process_exercise_attempt(self, attempt: ExerciseAttempt) -> dict:
         exercise_attempt_id = str(uuid.uuid4())
         attempt_timestamp = datetime.now(timezone.utc)
 
-        # Process through LanguageTool pipeline
         try:
             events = process_text(
                 text=attempt.text,
@@ -505,35 +451,36 @@ class RAGService:
                 source="exercise_attempt",
                 lt_tool=self.lt_tool,
             )
-            
-            # Per-task results: one ✅/❌ per mistake unit (LanguageTool match)
+
             tasks = []
-            if events:
-                for event in events:
-                    tasks.append({
-                        "mistake_id": event.get("mistake_id"),
-                        "is_correct": False,
-                        "mistake_type": event.get("mistake_type"),
-                        "rule_message": event.get("rule_message", ""),
-                    })
-                    # Ingest: only occurrence_point (no example_point for exercise_attempt)
-                    _, occurrence_point = self._ingest_mistake_event(
-                        event=event,
-                        user_text_id=exercise_attempt_id,
-                        lesson_artifact_id=attempt.lesson_artifact_id,
-                    )
-                    if occurrence_point:
-                        self.qdrant.upsert("mistake_occurrences", [occurrence_point])
-            else:
-                tasks.append({"mistake_id": None, "is_correct": True})
-            
-            # Event register: metadata only (no full text storage)
-            self._register_exercise_attempt({
-                "exercise_attempt_id": exercise_attempt_id,
-                "lesson_artifact_id": attempt.lesson_artifact_id,
-                "user_id": attempt.user_id,
-                "attempt_timestamp": attempt_timestamp.isoformat(),
-            })
+            async with self.session_factory() as session:
+                if events:
+                    for event in events:
+                        tasks.append({
+                            "mistake_id": event.get("mistake_id"),
+                            "is_correct": False,
+                            "mistake_type": event.get("mistake_type"),
+                            "rule_message": event.get("rule_message", ""),
+                        })
+                        _, occurrence_point = await self._ingest_mistake_event(
+                            session=session,
+                            event=event,
+                            user_text_id=exercise_attempt_id,
+                            lesson_artifact_id=attempt.lesson_artifact_id,
+                        )
+                        if occurrence_point:
+                            self.qdrant.upsert("mistake_occurrences", [occurrence_point])
+                else:
+                    tasks.append({"mistake_id": None, "is_correct": True})
+
+                await repo.insert_exercise_attempt(session, {
+                    "exercise_attempt_id": exercise_attempt_id,
+                    "lesson_artifact_id": attempt.lesson_artifact_id,
+                    "user_id": attempt.user_id,
+                    "attempt_timestamp": attempt_timestamp.isoformat(),
+                })
+
+                await session.commit()
 
             return {
                 "exercise_attempt_id": exercise_attempt_id,
@@ -546,22 +493,19 @@ class RAGService:
                 "LanguageTool is unavailable. Check your internet connection or try again later."
             ) from None
 
-    def _register_exercise_attempt(self, metadata: dict) -> None:
-        """Store exercise attempt metadata (no full text). V1: in-memory; V2: SQL."""
-        self.exercise_attempts.append(metadata)
-
     @staticmethod
     def _exercise_feedback_from_event(event: dict) -> str:
         """Generate feedback from LanguageTool event."""
         mistake_type = event.get("mistake_type", "error")
         return f"Detected {mistake_type} mistake. Review the sentence structure."
 
-    def _get_fallback_point(self, user_id: str) -> tuple[Optional[List[float]], Optional[dict]]:
+    async def _get_fallback_point(self, user_id: str) -> tuple[Optional[List[float]], Optional[dict]]:
         """
         Fallback when no session_candidate_points.
-        Uses ExampleImprintStore (SQL) for chronological lookup, then Qdrant by user_id + mistake_id.
+        Uses example_imprints (PostgreSQL) for chronological lookup, then Qdrant by user_id + mistake_id.
         """
-        mistake_id = self.imprint_store.get_most_recent_mistake_id(user_id)
+        async with self.session_factory() as session:
+            mistake_id = await repo.get_most_recent_imprint_mistake_id(session, user_id)
         if mistake_id:
             points = self.qdrant.scroll_by_mistake_id(
                 collection_name="mistake_examples",
@@ -592,7 +536,7 @@ class RAGService:
         """    
         return None, None
 
-    def _get_query_embedding_and_primary_example(
+    async def _get_query_embedding_and_primary_example(
         self,
         session_candidate_points: List[dict],
         user_id: str,
@@ -600,7 +544,7 @@ class RAGService:
         """
         Returns (query_embedding, primary_example) for lesson context.
         a) Session candidates: use first candidate's context_vector and payload.
-        b) Fallback: _get_fallback_point (scroll_most_recent).
+        b) Fallback: _get_fallback_point (PostgreSQL imprints → Qdrant).
         c) Neither: (None, None) → no usable session context.
         """
         points = session_candidate_points or []
@@ -612,7 +556,7 @@ class RAGService:
             if context_vec and len(context_vec) == 384:
                 return list(context_vec), payload
 
-        return self._get_fallback_point(user_id)
+        return await self._get_fallback_point(user_id)
 
     def _payload_to_detected_example(self, payload: dict) -> DetectedMistakeExample:
         """Format point payload for ContextAssembly detected_mistake_examples."""
@@ -745,7 +689,7 @@ class RAGService:
 
         return summaries
 
-    def _persist_lesson_artifact(
+    async def _persist_lesson_artifact(
         self,
         lesson: LessonResponse,
         user_id: str,
@@ -755,7 +699,6 @@ class RAGService:
         artifact_id = str(uuid.uuid4())
         created_at = datetime.now(timezone.utc)
 
-        # Extract mistake_types from detected_mistake_examples
         mistake_types_covered = [
             p.mistake_type
             for p in context.detected_mistake_examples
@@ -771,16 +714,14 @@ class RAGService:
             "content": lesson.explanation,
             "lesson_type": lesson.topic,
             "approach_type": lesson.approach_type,
-            "mistake_types_covered": mistake_types_covered, 
+            "mistake_types_covered": mistake_types_covered,
             "pedagogy_tags": pedagogy_tags,
             "created_at": created_at.isoformat(),
         }
 
-        self.artifact_store.upsert(artifact_id, artifact_payload)
-        
-        # Sync to SQL store for batch processing
-        if self.sql_store is not None:
-            self.sql_store.lesson_artifacts.append(artifact_payload)
+        async with self.session_factory() as session:
+            await repo.upsert_artifact(session, artifact_payload)
+            await session.commit()
 
         content_for_embedding = self._artifact_embedding_text(
             lesson=lesson,

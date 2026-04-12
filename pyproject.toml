@@ -7,7 +7,8 @@ dependencies = [
     "fastapi>=0.104.0",
     "pydantic>=2.0.0",
     "qdrant-client>=1.9.0",
-    "sqlalchemy>=2.0.0",
+    "sqlalchemy[asyncio]>=2.0.0",
+    "asyncpg>=0.29.0",
     "polars>=0.19.0",
     "sentence-transformers>=2.2.0",
     "torch>=2.0.0",
@@ -21,7 +22,11 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
 ]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
 
 # CPU-only PyTorch for smaller Docker builds. Remove for local GPU dev.
 [[tool.uv.index]]

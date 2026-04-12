@@ -1,6 +1,6 @@
 """Minimal integration test for lesson construction structural contract."""
 import pytest
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 from core.models import ContextAssembly, DetectedMistakeExample
 from rag.service import RAGService
@@ -10,7 +10,6 @@ from vectorstore.qdrant_client import QdrantStore
 
 @pytest.fixture
 def mock_qdrant():
-    """Mock QdrantStore."""
     qdrant = Mock(spec=QdrantStore)
     qdrant.search = Mock(return_value=[])
     qdrant.upsert = Mock()
@@ -19,16 +18,24 @@ def mock_qdrant():
 
 @pytest.fixture
 def mock_embedder():
-    """Mock embedder."""
     embedder = Mock(spec=Embedder)
     embedder.embed_single = Mock(return_value=[0.1] * 384)
     return embedder
 
 
 @pytest.fixture
-def rag_service(mock_qdrant, mock_embedder):
-    """Create RAGService with mocked dependencies."""
-    return RAGService(mock_qdrant, mock_embedder)
+def mock_session_factory():
+    factory = Mock()
+    ctx = AsyncMock()
+    ctx.__aenter__ = AsyncMock(return_value=AsyncMock())
+    ctx.__aexit__ = AsyncMock(return_value=False)
+    factory.return_value = ctx
+    return factory
+
+
+@pytest.fixture
+def rag_service(mock_qdrant, mock_embedder, mock_session_factory):
+    return RAGService(mock_qdrant, mock_embedder, mock_session_factory)
 
 
 def test_construct_lesson_stub_returns_valid_structure(

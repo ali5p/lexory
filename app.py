@@ -4,28 +4,36 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI
 
-load_dotenv()
+# Do not override variables already set by Docker Compose (e.g. DATABASE_URL=@postgres).
+load_dotenv(override=False)
 
 from api.routes import router
 from rag.embedder import Embedder
 from rag.service import RAGService
+from storage.database import (
+    build_engine,
+    build_session_factory,
+    create_tables_with_retry,
+    dispose_engine,
+)
 from vectorstore.qdrant_client import QdrantStore
-
-
-def create_rag_service() -> RAGService:
-    qdrant_url = os.environ.get("QDRANT_URL")
-    qdrant_store = QdrantStore(url=qdrant_url) if qdrant_url else QdrantStore()
-    embedder = Embedder()
-    return RAGService(qdrant_store, embedder)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.rag_service = create_rag_service()
+    engine = build_engine()
+    await create_tables_with_retry(engine)
+    session_factory = build_session_factory(engine)
+
+    qdrant_url = os.environ.get("QDRANT_URL")
+    qdrant_store = QdrantStore(url=qdrant_url) if qdrant_url else QdrantStore()
+    embedder = Embedder()
+
+    app.state.rag_service = RAGService(qdrant_store, embedder, session_factory)
     try:
         yield
     finally:
-        pass
+        await dispose_engine(engine)
 
 
 app = FastAPI(title="Lexory", version="0.1.0", lifespan=lifespan)

@@ -18,7 +18,7 @@ async def submit_and_lesson(
 ):
     """Combined ingest + lesson. Single flow: text (optional) + user_id → lesson + context."""
     user_text_id, session_id, lesson_artifact_id, lesson, context = (
-        rag_service.submit_and_lesson(text=request.text, user_id=request.user_id)
+        await rag_service.submit_and_lesson(text=request.text, user_id=request.user_id)
     )
 
     return SubmitResponse(
@@ -36,4 +36,4 @@ async def submit_exercise(
     request: ExerciseAttempt,
     rag_service: RAGService = Depends(get_rag_service),
 ):
-    return rag_service.process_exercise_attempt(request)
+    return await rag_service.process_exercise_attempt(request)
