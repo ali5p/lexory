@@ -74,13 +74,22 @@ Users must comply with the license provided by the model publisher.
 
 ---
 
-## SQLite
+## PostgreSQL
 
-Project: SQLite
-License: Public Domain
-Source: https://www.sqlite.org
+Project: PostgreSQL
+License: PostgreSQL License (similar to BSD / MIT)
+Source: https://www.postgresql.org
 
-SQLite is public domain software. It is included in this product for local storage.
+PostgreSQL is an open-source relational database. Lexory uses it (via Docker or a managed
+instance) for persistent storage of mistake occurrences, lesson artifacts, example
+imprints, and exercise-attempt metadata, accessed with SQLAlchemy and asyncpg.
+
+Copyright (c) 1996–present, The PostgreSQL Global Development Group
+
+Permission to use, copy, modify, and distribute this software and its documentation for any
+purpose, without fee, and without a written agreement is hereby granted, subject to the
+conditions described in the full PostgreSQL License:
+https://www.postgresql.org/about/licence/
 
 ---
 

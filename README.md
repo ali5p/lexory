@@ -266,6 +266,7 @@ This starts:
   - Swagger UI: http://localhost:8000/docs
 - **Qdrant** – Vector database at http://localhost:6333  
   - Data persisted in `./qdrant_storage`
+- **PostgreSQL** - Database at postgresql+asyncpg://lexory:lexory@localhost:5432/lexory
 - **Ollama** – LLM service for lesson generation (default mode)
 - **LanguageTool** – Grammar checking at http://localhost:8010 (no rate limits; allow ~30s for Java to start)
 
