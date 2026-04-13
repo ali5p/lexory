@@ -30,7 +30,7 @@ async def insert_occurrence(session: AsyncSession, data: dict) -> None:
 
 
 async def insert_imprint(session: AsyncSession, payload: dict) -> None:
-    required = ("mistake_id", "user_id", "session_id", "timestamp")
+    required = ("mistake_id", "user_id", "session_id", "detected_at")
     for k in required:
         if k not in payload:
             raise ValueError(f"Example imprint requires '{k}' in payload")
@@ -38,7 +38,7 @@ async def insert_imprint(session: AsyncSession, payload: dict) -> None:
         mistake_id=payload["mistake_id"],
         user_id=payload["user_id"],
         session_id=payload["session_id"],
-        timestamp=payload["timestamp"],
+        detected_at=payload["detected_at"],
         user_text_id=payload.get("user_text_id"),
         rule_id=payload.get("rule_id"),
         mistake_type=payload.get("mistake_type"),
@@ -53,7 +53,7 @@ async def get_most_recent_imprint_mistake_id(
     stmt = (
         select(ExampleImprint.mistake_id)
         .where(ExampleImprint.user_id == user_id)
-        .order_by(ExampleImprint.timestamp.desc())
+        .order_by(ExampleImprint.detected_at.desc())
         .limit(1)
     )
     result = await session.execute(stmt)

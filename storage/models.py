@@ -3,7 +3,7 @@
 from typing import Optional
 
 from sqlalchemy import String, Text
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -33,7 +33,7 @@ class ExampleImprint(Base):
     mistake_id: Mapped[str] = mapped_column(String, primary_key=True)
     user_id: Mapped[str] = mapped_column(String, index=True)
     session_id: Mapped[str] = mapped_column(String, index=True)
-    timestamp: Mapped[str] = mapped_column(String, index=True)
+    detected_at: Mapped[str] = mapped_column(String, index=True)
     user_text_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     rule_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     mistake_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)

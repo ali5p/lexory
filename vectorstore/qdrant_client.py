@@ -106,7 +106,7 @@ class QdrantStore:
                 "context": (384, Distance.COSINE),
             },
         )
-        self._ensure_timestamp_index("mistake_examples")
+        self._ensure_detected_at_index("mistake_examples")
         self._ensure_user_id_index("mistake_examples")
         self._ensure_named_collection(
             "mistake_occurrences",
@@ -148,14 +148,14 @@ class QdrantStore:
                 vectors_config=vectors_config,
             )
 
-    def _ensure_timestamp_index(self, collection_name: str) -> None:
-        # Ensure timestamp payload index for order_by (scroll_most_recent).
+    def _ensure_detected_at_index(self, collection_name: str) -> None:
+        # Payload index for payload field detected_at (ordering / filters).
         if isinstance(self.client, QdrantLocal):
             return  # Payload indexes have no effect in local Qdrant
         try:
             self.client.create_payload_index(
                 collection_name=collection_name,
-                field_name="timestamp",
+                field_name="detected_at",
                 field_schema="keyword",
             )
         except UnexpectedResponse as e:
@@ -277,50 +277,6 @@ class QdrantStore:
             for r in results
         ]
 
-
-    # TODO: scroll_most_recent could be returned to replace scroll_by_mistake_id
-    """
-    def scroll_most_recent(
-        self,
-        collection_name: str,
-        user_id: str,
-        limit: int = 1,
-        order_by_key: str = "timestamp",
-    ) -> list[dict]:
-        
-        # Scroll most recent points by payload timestamp (desc).
-        # Used for fallback query embedding when session has no candidates.
-        # Returns points with vectors (context) for mistake_examples.
-        # QdrantLocal: order_by not supported, so we scroll without it (any matching point).
-        
-        query_filter = Filter(
-            must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))]
-        )
-        kwargs: dict = {
-            "collection_name": collection_name,
-            "scroll_filter": query_filter,
-            "limit": limit,
-            "with_payload": True,
-            "with_vectors": ["context"],
-        }
-        if not isinstance(self.client, QdrantLocal):
-            kwargs["order_by"] = OrderBy(key=order_by_key, direction="desc")
-        try:
-            records, _ = self.client.scroll(**kwargs)
-        except Exception:
-            return []
-        out = []
-        for rec in records:
-            vec = None
-            if isinstance(getattr(rec, "vector", None), dict):
-                vec = rec.vector.get("context")
-            out.append({
-                "id": rec.id,
-                "payload": rec.payload or {},
-                "vectors": {"context": vec} if vec else {},
-            })
-        return out
-    """
 
     def scroll_by_mistake_id(
         self,

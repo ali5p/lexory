@@ -34,14 +34,14 @@ class InMemoryTextStore:
         text: str,
         user_id: str,
         session_id: Optional[str],
-        timestamp: datetime,
+        detected_at: datetime,
     ):
         self.texts[user_text_id] = {
             "user_text_id": user_text_id,
             "text": text,
             "user_id": user_id,
             "session_id": session_id,
-            "timestamp": timestamp.isoformat(),
+            "detected_at": detected_at.isoformat(),
         }
 
 
@@ -90,7 +90,7 @@ class RAGService:
             text=user_text.text,
             user_id=user_text.user_id,
             session_id=session_id,
-            timestamp=user_text.timestamp,
+            detected_at=user_text.detected_at,
         )
 
         session_candidate_points: List[dict] = []
@@ -101,7 +101,7 @@ class RAGService:
                 user_id=user_text.user_id,
                 user_text_id=user_text_id,
                 session_id=session_id,
-                timestamp=user_text.timestamp,
+                detected_at=user_text.detected_at,
                 embedder=self.embedder,
                 source="raw_text",
                 lt_tool=self.lt_tool,
@@ -127,7 +127,7 @@ class RAGService:
                     self.qdrant.upsert("mistake_examples", example_points)
                     for ep in example_points:
                         payload = ep.get("payload", {})
-                        if all(k in payload for k in ("mistake_id", "user_id", "session_id", "timestamp")):
+                        if all(k in payload for k in ("mistake_id", "user_id", "session_id", "detected_at")):
                             await repo.insert_imprint(session, payload)
                 if occurrence_points:
                     self.qdrant.upsert("mistake_occurrences", occurrence_points)
@@ -166,7 +166,7 @@ class RAGService:
             "text": event["text"],
             "source": event["source"],
             "weight": event["weight"],
-            "timestamp": event["timestamp"],
+            "detected_at": event["detected_at"],
         }
         if lesson_artifact_id:
             payload["lesson_artifact_id"] = lesson_artifact_id
@@ -189,7 +189,7 @@ class RAGService:
             "text": event["text"],
             "source": event["source"],
             "weight": event["weight"],
-            "timestamp": event["timestamp"],
+            "detected_at": event["detected_at"],
         }
         eid = event.get("example_id")
         if eid is not None:
@@ -243,7 +243,7 @@ class RAGService:
                 "user_id": event["user_id"],
                 "mistake_id": event["mistake_id"],
                 "user_text_id": user_text_id,
-                "detected_at": event["timestamp"],
+                "detected_at": event["detected_at"],
                 "source": event["source"],
                 "mistake_type": mistake_type,
                 "rule_id": event["rule_id"],
@@ -285,7 +285,7 @@ class RAGService:
                 "user_id": event["user_id"],
                 "mistake_id": event["mistake_id"],
                 "user_text_id": user_text_id,
-                "detected_at": event["timestamp"],
+                "detected_at": event["detected_at"],
                 "source": event["source"],
                 "mistake_type": mistake_type,
                 "rule_id": event["rule_id"],
@@ -340,7 +340,7 @@ class RAGService:
                 "user_id": event["user_id"],
                 "mistake_id": event["mistake_id"],
                 "user_text_id": user_text_id,
-                "detected_at": event["timestamp"],
+                "detected_at": event["detected_at"],
                 "source": event["source"],
                 "mistake_type": mistake_type,
                 "rule_id": event["rule_id"],
@@ -369,7 +369,7 @@ class RAGService:
             "user_id": event["user_id"],
             "mistake_id": event["mistake_id"],
             "user_text_id": user_text_id,
-            "detected_at": event["timestamp"],
+            "detected_at": event["detected_at"],
             "source": event["source"],
             "mistake_type": mistake_type,
             "rule_id": event["rule_id"],
@@ -446,7 +446,7 @@ class RAGService:
                 user_id=attempt.user_id,
                 user_text_id=exercise_attempt_id,
                 session_id=None,
-                timestamp=attempt_timestamp,
+                detected_at=attempt_timestamp,
                 embedder=self.embedder,
                 source="exercise_attempt",
                 lt_tool=self.lt_tool,
@@ -518,22 +518,7 @@ class RAGService:
                 payload = p.get("payload", {})
                 if vec and len(vec) == 384:
                     return list(vec), payload
-        
-        # TODO: scroll_most_recent could be returned to replace scroll_by_mistake_id
-        """
-        points = self.qdrant.scroll_most_recent(
-            collection_name="mistake_examples",
-            user_id=user_id,
-            limit=1,
-        )
-        if not points:
-            return None, None
-        p = points[0]
-        vec = p.get("vectors", {}).get("context")
-        payload = p.get("payload", {})
-        if vec and len(vec) == 384:
-            return list(vec), payload
-        """    
+         
         return None, None
 
     async def _get_query_embedding_and_primary_example(

@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class UserText(BaseModel):
     text: str
     user_id: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    detected_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class MistakeInstance(BaseModel):
@@ -15,7 +15,7 @@ class MistakeInstance(BaseModel):
     mistake_type: str
     correction: str
     user_id: str
-    timestamp: datetime = Field(default_factory=datetime.now)
+    detected_at: datetime = Field(default_factory=datetime.now)
 
 
 class LearningSummary(BaseModel):

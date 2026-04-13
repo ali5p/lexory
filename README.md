@@ -124,20 +124,21 @@ LearningSummaryBatch is currently unused. It is planned to be part of the contex
 
 ### Local vector query limitation
 
-An SQLite-based **Imprint storage layer** was introduced to mirror vector payload metadata.
+An SQL-based **Imprint storage layer** was introduced to mirror vector payload metadata.
 
 This compensates for sorting (indexing) limitations in the local Qdrant client.
 
 Workflow:
 
 ```
-SQLite
-→ timestamp filtering
+PostgreSQL
+→ detected_at filtering
 → retrieve mistake_id
-→ Qdrant payload filter (mistake_id)
+Qdrant
+→ payload filter (mistake_id)
 ```
 
-SQLite is used because it provides reliable indexing for time-based queries.
+SQL is used because it provides reliable indexing for time-based queries.
 
 
 ## Project Status

@@ -95,7 +95,7 @@ def process_text(
     user_id: str,
     user_text_id: str,
     session_id: Optional[str],
-    timestamp: datetime,
+    detected_at: datetime,
     embedder: Embedder,
     source: str = "raw_text",
     lt_tool: Optional[Any] = None,
@@ -108,14 +108,14 @@ def process_text(
         user_id: User identifier
         user_text_id: ID linking back to source text/attempt (user_text_id or exercise_attempt_id)
         session_id: Optional session identifier (None for exercise attempts)
-        timestamp: Timestamp of text submission (shared across all events from this text)
+        detected_at: Wall-clock instant for this submission (shared across all events from this text)
         embedder: Embedder instance for context vectors
         source: "raw_text" or "exercise_attempt"
         lt_tool: Optional LanguageTool instance (for testing)
     
     Returns:
         List of mistake event dicts, one per detected rule match.
-        All events share the same user_text_id, session_id, and timestamp.
+        All events share the same user_text_id, session_id, and detected_at.
     """
     if LanguageTool is None and LanguageToolPublicAPI is None and lt_tool is None:
         raise ImportError("language_tool_python not available")
@@ -181,7 +181,7 @@ def process_text(
                 "text": sentence,
                 "source": source,
                 "weight": weight,
-                "timestamp": timestamp.isoformat(),  # Shared timestamp from source text/attempt
+                "detected_at": detected_at.isoformat(),
                 "mistake_logic_vector": mistake_logic_vector,
                 "context_vector": context_vector,
                 "extra": {},
