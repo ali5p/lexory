@@ -16,6 +16,7 @@ class MistakeOccurrence(Base):
 
     mistake_id: Mapped[str] = mapped_column(String, primary_key=True)
     user_id: Mapped[str] = mapped_column(String, index=True)
+    session_id: Mapped[str] = mapped_column(String, index=True, default="")
     user_text_id: Mapped[str] = mapped_column(String, index=True)
     detected_at: Mapped[str] = mapped_column(String, index=True)
     source: Mapped[str] = mapped_column(String)
@@ -23,20 +24,6 @@ class MistakeOccurrence(Base):
     rule_id: Mapped[str] = mapped_column(String)
     example_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     lesson_artifact_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-
-
-class ExampleImprint(Base):
-    """Chronological record of example points written to Qdrant (fallback retrieval)."""
-
-    __tablename__ = "example_imprints"
-
-    mistake_id: Mapped[str] = mapped_column(String, primary_key=True)
-    user_id: Mapped[str] = mapped_column(String, index=True)
-    session_id: Mapped[str] = mapped_column(String, index=True)
-    detected_at: Mapped[str] = mapped_column(String, index=True)
-    user_text_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    rule_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    mistake_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
 
 class LessonArtifact(Base):

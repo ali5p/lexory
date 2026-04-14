@@ -80,10 +80,6 @@ Project: PostgreSQL
 License: PostgreSQL License (similar to BSD / MIT)
 Source: https://www.postgresql.org
 
-PostgreSQL is an open-source relational database. Lexory uses it (via Docker or a managed
-instance) for persistent storage of mistake occurrences, lesson artifacts, example
-imprints, and exercise-attempt metadata, accessed with SQLAlchemy and asyncpg.
-
 Copyright (c) 1996–present, The PostgreSQL Global Development Group
 
 Permission to use, copy, modify, and distribute this software and its documentation for any

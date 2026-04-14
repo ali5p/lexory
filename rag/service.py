@@ -224,6 +224,7 @@ class RAGService:
             (example_point, occurrence_point) - either can be None
         """
         event.setdefault("user_text_id", user_text_id)
+        session_id_val = event.get("session_id", "")
         mistake_type = event["mistake_type"]
         context_vector = event["context_vector"]
         mistake_logic_vector = event["mistake_logic_vector"]
@@ -242,6 +243,7 @@ class RAGService:
             occurrence_data = {
                 "user_id": event["user_id"],
                 "mistake_id": event["mistake_id"],
+                "session_id": session_id_val,
                 "user_text_id": user_text_id,
                 "detected_at": event["detected_at"],
                 "source": event["source"],
@@ -284,6 +286,7 @@ class RAGService:
             occurrence_data = {
                 "user_id": event["user_id"],
                 "mistake_id": event["mistake_id"],
+                "session_id": session_id_val,
                 "user_text_id": user_text_id,
                 "detected_at": event["detected_at"],
                 "source": event["source"],
@@ -339,6 +342,7 @@ class RAGService:
             await repo.insert_occurrence(session, {
                 "user_id": event["user_id"],
                 "mistake_id": event["mistake_id"],
+                "session_id": session_id_val,
                 "user_text_id": user_text_id,
                 "detected_at": event["detected_at"],
                 "source": event["source"],
@@ -368,6 +372,7 @@ class RAGService:
         await repo.insert_occurrence(session, {
             "user_id": event["user_id"],
             "mistake_id": event["mistake_id"],
+            "session_id": session_id_val,
             "user_text_id": user_text_id,
             "detected_at": event["detected_at"],
             "source": event["source"],
@@ -502,10 +507,10 @@ class RAGService:
     async def _get_fallback_point(self, user_id: str) -> tuple[Optional[List[float]], Optional[dict]]:
         """
         Fallback when no session_candidate_points.
-        Uses example_imprints (PostgreSQL) for chronological lookup, then Qdrant by user_id + mistake_id.
+        Picks latest mistake_occurrences row with example_id set (has mistake_examples point), then Qdrant scroll.
         """
         async with self.session_factory() as session:
-            mistake_id = await repo.get_most_recent_imprint_mistake_id(session, user_id)
+            mistake_id = await repo.get_most_recent_occurrence_mistake_id(session, user_id)
         if mistake_id:
             points = self.qdrant.scroll_by_mistake_id(
                 collection_name="mistake_examples",
@@ -529,7 +534,7 @@ class RAGService:
         """
         Returns (query_embedding, primary_example) for lesson context.
         a) Session candidates: use first candidate's context_vector and payload.
-        b) Fallback: _get_fallback_point (PostgreSQL imprints → Qdrant).
+        b) Fallback: _get_fallback_point (PostgreSQL occurrences with example_id → Qdrant).
         c) Neither: (None, None) → no usable session context.
         """
         points = session_candidate_points or []

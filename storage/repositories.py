@@ -5,18 +5,14 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from storage.models import (
-    ExampleImprint,
-    ExerciseAttempt,
-    LessonArtifact,
-    MistakeOccurrence,
-)
+from storage.models import ExerciseAttempt, LessonArtifact, MistakeOccurrence
 
 
 async def insert_occurrence(session: AsyncSession, data: dict) -> None:
     row = MistakeOccurrence(
         mistake_id=data["mistake_id"],
         user_id=data["user_id"],
+        session_id=data.get("session_id", ""),
         user_text_id=data["user_text_id"],
         detected_at=data["detected_at"],
         source=data["source"],
@@ -29,31 +25,17 @@ async def insert_occurrence(session: AsyncSession, data: dict) -> None:
     await session.flush()
 
 
-async def insert_imprint(session: AsyncSession, payload: dict) -> None:
-    required = ("mistake_id", "user_id", "session_id", "detected_at")
-    for k in required:
-        if k not in payload:
-            raise ValueError(f"Example imprint requires '{k}' in payload")
-    row = ExampleImprint(
-        mistake_id=payload["mistake_id"],
-        user_id=payload["user_id"],
-        session_id=payload["session_id"],
-        detected_at=payload["detected_at"],
-        user_text_id=payload.get("user_text_id"),
-        rule_id=payload.get("rule_id"),
-        mistake_type=payload.get("mistake_type"),
-    )
-    session.add(row)
-    await session.flush()
-
-
-async def get_most_recent_imprint_mistake_id(
+async def get_most_recent_occurrence_mistake_id(
     session: AsyncSession, user_id: str
 ) -> Optional[str]:
+    """Latest mistake_id for this user among rows that have a mistake_examples Qdrant point (example_id set)."""
     stmt = (
-        select(ExampleImprint.mistake_id)
-        .where(ExampleImprint.user_id == user_id)
-        .order_by(ExampleImprint.detected_at.desc())
+        select(MistakeOccurrence.mistake_id)
+        .where(
+            MistakeOccurrence.user_id == user_id,
+            MistakeOccurrence.example_id.isnot(None),
+        )
+        .order_by(MistakeOccurrence.detected_at.desc())
         .limit(1)
     )
     result = await session.execute(stmt)
