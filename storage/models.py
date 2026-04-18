@@ -36,7 +36,6 @@ class LessonArtifact(Base):
     lesson_type: Mapped[str] = mapped_column(String)
     approach_type: Mapped[str] = mapped_column(String)
     mistake_types_covered: Mapped[list] = mapped_column(JSONB, default=list)
-    pedagogy_tags: Mapped[list] = mapped_column(JSONB, default=list)
     created_at: Mapped[str] = mapped_column(String, index=True)
 
 

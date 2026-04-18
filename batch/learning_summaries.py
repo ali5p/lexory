@@ -51,7 +51,6 @@ class LessonArtifactRow(BaseModel):
     id: str
     user_id: str
     mistake_types_covered: List[str]
-    pedagogy_tags: List[str]
     created_at: datetime
 
 

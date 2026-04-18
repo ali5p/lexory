@@ -52,7 +52,6 @@ async def upsert_artifact(session: AsyncSession, data: dict) -> None:
         lesson_type=data.get("lesson_type", ""),
         approach_type=data.get("approach_type", ""),
         mistake_types_covered=data.get("mistake_types_covered", []),
-        pedagogy_tags=data.get("pedagogy_tags", []),
         created_at=data.get("created_at", ""),
     )
     await session.merge(row)

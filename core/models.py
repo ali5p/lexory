@@ -32,7 +32,6 @@ class LessonArtifact(BaseModel):
     user_id: str
     session_id: Optional[str]
     mistake_types_covered: List[str]
-    pedagogy_tags: List[str]
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 

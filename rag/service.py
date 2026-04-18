@@ -125,10 +125,6 @@ class RAGService:
 
                 if example_points:
                     self.qdrant.upsert("mistake_examples", example_points)
-                    for ep in example_points:
-                        payload = ep.get("payload", {})
-                        if all(k in payload for k in ("mistake_id", "user_id", "session_id", "detected_at")):
-                            await repo.insert_imprint(session, payload)
                 if occurrence_points:
                     self.qdrant.upsert("mistake_occurrences", occurrence_points)
 
@@ -695,17 +691,15 @@ class RAGService:
             if p.mistake_type
         ]
 
-        pedagogy_tags = self._pedagogy_tags_for_lesson()
-
         artifact_payload = {
             "artifact_id": artifact_id,
             "user_id": user_id,
             "session_id": session_id or "",
             "content": lesson.explanation,
+            "exercises": lesson.exercises,
             "lesson_type": lesson.topic,
             "approach_type": lesson.approach_type,
             "mistake_types_covered": mistake_types_covered,
-            "pedagogy_tags": pedagogy_tags,
             "created_at": created_at.isoformat(),
         }
 
@@ -713,11 +707,7 @@ class RAGService:
             await repo.upsert_artifact(session, artifact_payload)
             await session.commit()
 
-        content_for_embedding = self._artifact_embedding_text(
-            lesson=lesson,
-            mistake_types_covered=mistake_types_covered, 
-            pedagogy_tags=pedagogy_tags,
-        )
+        content_for_embedding = self._artifact_embedding_text(lesson)
 
         artifact_vector = self.embedder.embed_single(content_for_embedding)
         self.qdrant.upsert(
@@ -732,25 +722,11 @@ class RAGService:
         )
         return artifact_id
 
-    @staticmethod
-    def _pedagogy_tags_for_lesson() -> List[str]:
-        return ["error_explanation", "guided_practice"]
 
     @staticmethod
-    def _artifact_embedding_text(
-        lesson: LessonResponse,
-        mistake_types_covered: List[str],
-        pedagogy_tags: List[str],
-    ) -> str:
-        mistake_types_covered_text = ", ".join(mistake_types_covered) if mistake_types_covered else "no-specific-mistake_types"
-        tags_text = ", ".join(pedagogy_tags) if pedagogy_tags else "general"
-
-        return (
-            f"Lesson topic: {lesson.topic}. "
-            f"Explanation: {lesson.explanation}. "
-            f"Taught mistake types: {mistake_types_covered_text}. "
-            f"Pedagogy: {tags_text}."
-        )
+    def _artifact_embedding_text(lesson: LessonResponse) -> str:
+        """Text embedded for lesson_artifact_embeddings — explanation only (LLM or rule-based)."""
+        return (lesson.explanation or "").strip()
 
 
     def _construct_lesson(
