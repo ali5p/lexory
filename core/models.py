@@ -43,15 +43,11 @@ class SessionContext(BaseModel):
 
 
 class SubmitRequest(BaseModel):
-    """Combined ingest + lesson: text, user_id."""
-
     text: str = ""
     user_id: str
 
 
 class SubmitResponse(BaseModel):
-    """Full system output for testing; production UI shows only lesson."""
-
     user_text_id: Optional[str] = None
     session_id: str
     lesson_artifact_id: str
@@ -98,4 +94,4 @@ class QueryResponse(BaseModel):
 class ExerciseAttempt(BaseModel):
     text: str
     user_id: str
-    lesson_artifact_id: str  # Required: links attempt to the lesson it exercises
+    lesson_artifact_id: str 
