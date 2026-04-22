@@ -1,3 +1,4 @@
+import asyncio
 import os
 from contextlib import asynccontextmanager
 
@@ -15,12 +16,14 @@ from storage.database import (
     build_session_factory,
     create_tables_with_retry,
     dispose_engine,
+    run_alembic_upgrade_sync,
 )
 from vectorstore.qdrant_client import QdrantStore
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await asyncio.to_thread(run_alembic_upgrade_sync)
     engine = build_engine()
     await create_tables_with_retry(engine)
     session_factory = build_session_factory(engine)

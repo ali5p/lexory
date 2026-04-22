@@ -1,3 +1,4 @@
+import logging
 import os
 import uuid
 from datetime import datetime, timezone
@@ -17,9 +18,16 @@ from rag.approaches.default import DefaultApproach
 from rag.approaches.example_based import ExampleBasedApproach
 from rag.approaches.rule_based import RuleBasedApproach
 from rag.embedder import Embedder
+from rag.mistake_exclusion import (
+    delta_for_exercise_missed_target,
+    delta_for_ingest_mistake_event,
+    skip_example_for_qdrant,
+)
 from rag.pipelines.languagetool_pipeline import create_language_tool, process_text
 from storage import repositories as repo
 from vectorstore.qdrant_client import QdrantStore
+
+_missing_artifacts = logging.getLogger("lexory.missing_artifacts")
 
 
 class InMemoryTextStore:
@@ -208,9 +216,8 @@ class RAGService:
         also includes example_id (new UUID per stored example row) for SQL / FK separation
         from the occurrence row.
 
-        Skip example_point (mistake_examples) for:
-        - source == "exercise_attempt" (AI-generated text, avoid semantic pollution)
-        - mistake_type in ("other", "style") (excluded from lessons; only track in occurrences)
+        Skip example_point (mistake_examples) when `skip_example_for_qdrant(event)` is true
+        (exercise sources and Qdrant-excluded mistake types; see `rag.mistake_exclusion`).
 
         When out_session_candidates is provided and event passes the category check,
         append one session candidate (vectors + payload) for this request's lesson
@@ -224,10 +231,7 @@ class RAGService:
         mistake_type = event["mistake_type"]
         context_vector = event["context_vector"]
         mistake_logic_vector = event["mistake_logic_vector"]
-        skip_example = (
-            event.get("source") == "exercise_attempt"
-            or mistake_type in ("other", "style")
-        )
+        skip_example = skip_example_for_qdrant(event)
 
         if skip_example:
             # Only create occurrence_point (mistake_occurrences)
@@ -249,6 +253,9 @@ class RAGService:
             if lesson_artifact_id:
                 occurrence_data["lesson_artifact_id"] = lesson_artifact_id
             await repo.insert_occurrence(session, occurrence_data)
+            await self._record_user_scoring_for_occurrence(
+                session, event, user_text_id
+            )
             return None, occurrence_point
 
         # Stage 1: Category check - does this mistake_type exist for this user?
@@ -291,6 +298,9 @@ class RAGService:
                 "example_id": example_id,
             }
             await repo.insert_occurrence(session, occurrence_data)
+            await self._record_user_scoring_for_occurrence(
+                session, event, user_text_id
+            )
 
             # Intercept: first example for this mistake_type is also a session candidate
             if out_session_candidates is not None:
@@ -345,6 +355,9 @@ class RAGService:
                 "mistake_type": mistake_type,
                 "rule_id": event["rule_id"],
             })
+            await self._record_user_scoring_for_occurrence(
+                session, event, user_text_id
+            )
 
             return None, occurrence_point
 
@@ -376,8 +389,29 @@ class RAGService:
             "rule_id": event["rule_id"],
             "example_id": example_id,
         })
+        await self._record_user_scoring_for_occurrence(session, event, user_text_id)
 
         return example_point, occurrence_point
+
+    async def _record_user_scoring_for_occurrence(
+        self,
+        session: AsyncSession,
+        event: dict,
+        session_or_exercise_id: str,
+    ) -> None:
+        d = delta_for_ingest_mistake_event(event)
+        await repo.insert_user_scoring_event(
+            session,
+            {
+                "user_id": event["user_id"],
+                "rule_id": event.get("rule_id"),
+                "mistake_type": event["mistake_type"],
+                "mistake_id": event.get("mistake_id"),
+                "session_or_exercise_id": session_or_exercise_id,
+                "occurred_at": event["detected_at"],
+                "delta": d,
+            },
+        )
 
     async def submit_and_lesson(
         self, text: str, user_id: str
@@ -404,9 +438,31 @@ class RAGService:
         user_filter = {"user_id": user_id}
 
         if query_embedding is None:
+            async with self.session_factory() as s:
+                has_rows = await repo.has_any_user_scoring_event(s, user_id)
+                has_graded = await repo.has_nonzero_user_scoring_event(s, user_id)
+                has_positive = await repo.has_positive_clamped_mistake_type(s, user_id)
+
+            if not has_rows:
+                expl = (
+                    "No usable session context. Please submit more text to generate a lesson."
+                )
+                title = "Cold start"
+            elif has_graded and not has_positive:
+                expl = (
+                    "You have worked through your past struggles. "
+                    "All tracked mistake types are now at zero. "
+                    "Submit new text to focus on a different area if you like."
+                )
+                title = "Mastered your previous struggles"
+            else:
+                expl = (
+                    "No usable session context. Please submit more text to generate a lesson."
+                )
+                title = "No usable session context"
             no_context_lesson = LessonResponse(
-                topic="No usable session context",
-                explanation="No usable session context. Please submit more text to generate a lesson.",
+                topic=title,
+                explanation=expl,
                 exercises=[],
                 approach_type="rule_based",
             )
@@ -455,6 +511,16 @@ class RAGService:
 
             tasks = []
             async with self.session_factory() as session:
+                art = await repo.get_lesson_artifact_by_id(
+                    session, attempt.lesson_artifact_id
+                )
+                if art is None:
+                    _missing_artifacts.error("Lesson artifact with targeted mistake_type is missing")
+                targets: Set[str] = set(art.mistake_types_covered or []) if art else set()
+                detected: Set[str] = (
+                    {e.get("mistake_type", "") for e in events} if events else set()
+                )
+
                 if events:
                     for event in events:
                         tasks.append({
@@ -473,6 +539,20 @@ class RAGService:
                             self.qdrant.upsert("mistake_occurrences", [occurrence_point])
                 else:
                     tasks.append({"mistake_id": None, "is_correct": True})
+
+                for mt in targets - detected:
+                    await repo.insert_user_scoring_event(
+                        session,
+                        {
+                            "user_id": attempt.user_id,
+                            "rule_id": None,
+                            "mistake_type": mt,
+                            "mistake_id": None,
+                            "session_or_exercise_id": exercise_attempt_id,
+                            "occurred_at": attempt_timestamp.isoformat(),
+                            "delta": delta_for_exercise_missed_target(),
+                        },
+                    )
 
                 await repo.insert_exercise_attempt(session, {
                     "exercise_attempt_id": exercise_attempt_id,
@@ -502,16 +582,19 @@ class RAGService:
 
     async def _get_fallback_point(self, user_id: str) -> tuple[Optional[List[float]], Optional[dict]]:
         """
-        Fallback when no session_candidate_points.
-        Picks latest mistake_occurrences row with example_id set (has mistake_examples point), then Qdrant scroll.
+        When there are no session_candidate_points: top-k mistake_type by clamped aggregate
+        score (tie-break: latest occurred_at), then first mistake_examples point per type.
         """
         async with self.session_factory() as session:
-            mistake_id = await repo.get_most_recent_occurrence_mistake_id(session, user_id)
-        if mistake_id:
-            points = self.qdrant.scroll_by_mistake_id(
+            top_types = await repo.top_mistake_types_by_clamped_score(
+                session, user_id, k=2
+            )
+        for mt in top_types:
+            points = self.qdrant.scroll_by_mistake_type(
                 collection_name="mistake_examples",
                 user_id=user_id,
-                mistake_id=mistake_id,
+                mistake_type=mt,
+                limit=1,
             )
             if points:
                 p = points[0]
@@ -519,7 +602,7 @@ class RAGService:
                 payload = p.get("payload", {})
                 if vec and len(vec) == 384:
                     return list(vec), payload
-         
+
         return None, None
 
     async def _get_query_embedding_and_primary_example(

@@ -14,6 +14,7 @@ except ImportError:
     LanguageToolPublicAPI = None
 
 from rag.embedder import Embedder
+from rag.mistake_exclusion import MISTAKE_TYPES_EXCLUDED_FOR_QDRANT
 from rag.utils.assets import load_languagetool_mapping
 from rag.utils.mistake_logic_vector import generate_mistake_logic_vector
 from rag.utils.rule_id_normalizer import normalize_rule_id
@@ -154,13 +155,13 @@ def process_text(
             
             # Rule message from LanguageTool (for lesson context). Only for non-other/non-style.
             rule_message = ""
-            if mistake_type not in ("other", "style"):
+            if mistake_type not in MISTAKE_TYPES_EXCLUDED_FOR_QDRANT:
                 rule_message = str(getattr(match, "message", "") or "")
             
-            # Generate vectors (skip context_vector for exercise_attempt or other/style - no example_point)
+            # Generate vectors (skip context for exercise or Qdrant-excluded types; see mistake_exclusion)
             need_context = (
                 source != "exercise_attempt"
-                and mistake_type not in ("other", "style")
+                and mistake_type not in MISTAKE_TYPES_EXCLUDED_FOR_QDRANT
             )
             context_vector = embedder.embed_single(sentence) if need_context else [0.0] * 384
             if need_context and len(context_vector) != 384:

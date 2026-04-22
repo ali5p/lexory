@@ -62,6 +62,35 @@ def get_database_url() -> str:
     return _normalize_database_url_for_docker(url)
 
 
+def get_sync_migrations_url() -> str:
+    """
+    Sync driver URL for Alembic (and command.upgrade from app). Async sessions keep asyncpg.
+    """
+    url = get_database_url()
+    if url.startswith("postgresql+asyncpg://"):
+        return "postgresql+psycopg://" + url.removeprefix("postgresql+asyncpg://")
+    if url.startswith("postgres://"):
+        return "postgresql+psycopg://" + url.removeprefix("postgres://")
+    return url
+
+
+def run_alembic_upgrade_sync() -> None:
+    """Run `alembic upgrade head` using DATABASE_URL; intended for app startup in a thread."""
+    from pathlib import Path
+
+    from alembic import command
+    from alembic.config import Config
+
+    root = Path(__file__).resolve().parent.parent
+    ini = root / "alembic.ini"
+    if not ini.is_file():
+        _log.warning("alembic.ini not found; skipping migrations")
+        return
+    cfg = Config(str(ini))
+    cfg.set_main_option("sqlalchemy.url", get_sync_migrations_url())
+    command.upgrade(cfg, "head")
+
+
 def build_engine(database_url: str | None = None) -> AsyncEngine:
     url = database_url or get_database_url()
     # Docker / local Postgres often has TLS off; asyncpg may negotiate SSL otherwise.

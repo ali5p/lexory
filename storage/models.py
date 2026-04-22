@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from sqlalchemy import String, Text
+from sqlalchemy import Float, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -46,3 +46,21 @@ class ExerciseAttempt(Base):
     lesson_artifact_id: Mapped[str] = mapped_column(String, index=True)
     user_id: Mapped[str] = mapped_column(String, index=True)
     attempt_timestamp: Mapped[str] = mapped_column(String, index=True)
+
+
+class UserScoringEvent(Base):
+    """
+    Incremental scoring: +1 / 0 / -0.5 per event. Totals are SUM(delta) per mistake_type,
+    clamped at read time; tie-break uses MAX(occurred_at) per type.
+    """
+
+    __tablename__ = "user_scoring_events"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, index=True)
+    rule_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    mistake_type: Mapped[str] = mapped_column(String, index=True)
+    mistake_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    session_or_exercise_id: Mapped[str] = mapped_column(String, index=True)
+    occurred_at: Mapped[str] = mapped_column(String, index=True)
+    delta: Mapped[float] = mapped_column(Float, index=False)

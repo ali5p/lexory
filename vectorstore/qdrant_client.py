@@ -331,3 +331,60 @@ class QdrantStore:
             })
         return out
 
+    def scroll_by_mistake_type(
+        self,
+        collection_name: str,
+        user_id: str,
+        mistake_type: str,
+        limit: int = 1,
+    ) -> list[dict]:
+        """
+        Scroll points filtered by user_id + mistake_type (for fallback lesson by aggregate score).
+        """
+        query_filter = Filter(
+            must=[
+                FieldCondition(key="user_id", match=MatchValue(value=user_id)),
+                FieldCondition(
+                    key="mistake_type", match=MatchValue(value=mistake_type)
+                ),
+            ]
+        )
+        try:
+            records, _ = self.client.scroll(
+                collection_name=collection_name,
+                scroll_filter=query_filter,
+                limit=limit,
+                with_payload=True,
+                with_vectors=["context"],
+            )
+        except UnexpectedResponse as e:
+            _log.warning(
+                "scroll_by_mistake_type: Qdrant UnexpectedResponse (%s)",
+                e,
+                exc_info=True,
+            )
+            return []
+        except (ConnectionError, TimeoutError, OSError) as e:
+            _log.warning(
+                "scroll_by_mistake_type: connection error (%s)",
+                e,
+                exc_info=True,
+            )
+            return []
+        except Exception:
+            _log.exception("scroll_by_mistake_type: unexpected error")
+            return []
+        out = []
+        for rec in records:
+            vec = None
+            if isinstance(getattr(rec, "vector", None), dict):
+                vec = rec.vector.get("context")
+            out.append(
+                {
+                    "id": rec.id,
+                    "payload": rec.payload or {},
+                    "vectors": {"context": vec} if vec else {},
+                }
+            )
+        return out
+
