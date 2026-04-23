@@ -35,7 +35,8 @@ user text
 - Vector database: Qdrant
 - Grammar detection: LanguageTool
 - LLM generation: Ollama
-- Storage: SQLite
+- Storage: PostgreSQL (relational data) + Qdrant (vectors)
+- Schema: SQLAlchemy + [Alembic](https://alembic.sqlalchemy.org/) (migrations)
 - Infrastructure: Docker
 
 ### Current State
@@ -124,21 +125,16 @@ LearningSummaryBatch is currently unused. It is planned to be part of the contex
 
 ### Local vector query limitation
 
-An SQL-based **Imprint storage layer** was introduced to mirror vector payload metadata.
+The relational store holds occurrence metadata, lesson artifacts, exercise attempts, and **incremental user scoring** rows used for time-based and aggregate queries.
 
-This compensates for sorting (indexing) limitations in the local Qdrant client.
-
-Workflow:
+A typical fallback workflow (when session candidates are empty) uses aggregate scores, then Qdrant:
 
 ```
-PostgreSQL
-→ detected_at filtering
-→ retrieve mistake_id
-Qdrant
-→ payload filter (mistake_id)
+PostgreSQL (user_scoring_events, per mistake_type)
+→ top mistake_type
+Qdrant (mistake_examples, filter by user_id + mistake_type)
 ```
 
-SQL is used because it provides reliable indexing for time-based queries.
 
 
 ## Project Status
@@ -176,8 +172,7 @@ flowchart TB
 
     L[(Qdrant mistake_examples)]
     M[(Qdrant mistake_occurrences)]
-    N[(Occurrence store)]
-    O[(Imprint store)]
+    P[(PostgreSQL: occurrences, lesson artifacts, exercise attempts, user_scoring_events)]
 
     A --> B
     B --> C
@@ -194,19 +189,17 @@ flowchart TB
 
     G --> L
     G --> M
-    G --> N
-    G --> O
+    G --> P
 
     J --> M
-    J --> N
+    J --> P
 
     K --> L
     K --> M
-    K --> N
-    K --> O
+    K --> P
 ```
 
-*Category exists* = user already has examples for this `mistake_type`. *Similarity > 0.9* = near-duplicate; store occurrence only. `exercise_attempt` and `other`/`style` types skip examples and go straight to occurrence.
+*Category exists* = user already has examples for this `mistake_type`. *Similarity > 0.9* = near-duplicate; store occurrence only. `exercise_attempt` and Qdrant-excluded `mistake_type` values (see `rag/mistake_exclusion.py`) skip new `mistake_examples` points; rows are still written to PostgreSQL and scored.
 
 ### Lesson generation flow
 How stored data is used to generate lessons.
@@ -225,11 +218,11 @@ flowchart TB
     I[_persist_lesson_artifact]
 
     J[Session candidates]
-    K[(Imprint store)]
+    K[Fallback: PostgreSQL scores then Qdrant by mistake_type]
     L[(mistake_examples)]
     M[(lesson_artifact_embeddings)]
     N[(learning_summary_embeddings)]
-    O[(lesson_artifact_embeddings)]
+    O[(lesson_artifact_embeddings — persist new lesson)]
 
     A --> B
     B -- Yes --> C
@@ -251,7 +244,7 @@ flowchart TB
     I --> O
 ```
 
-*Query embedding*: from session candidates (from ingest) or fallback via Imprint store → `mistake_examples`. *Context*: primary mistake + similar lesson artifacts + learning summaries. *Lesson*: approach handler (LLM or stub) builds explanation and exercises.
+*Query embedding*: from session candidates (from ingest) or **fallback** when there are no candidates: top `mistake_type` by clamped user score in PostgreSQL (`user_scoring_events`, tie-break: latest `occurred_at`), then the **latest** `mistake_examples` point for that type (Qdrant scroll ordered by payload `detected_at` desc). *Context*: primary mistake + similar lesson artifacts + learning summaries. *Lesson*: approach handler (LLM or stub) builds explanation and exercises.
 
 ## Running with Docker
 
@@ -299,6 +292,19 @@ With **`docker compose`**, the **lexory** service receives **`QDRANT_URL`**, **`
 | `OLLAMA_TIMEOUT` | From `.env` / default `120` | Chat request timeout in seconds |
 | `QDRANT_URL` | Fixed in `docker-compose.yml` | `http://qdrant:6333` |
 | `LANGUAGETOOL_URL` | Fixed in `docker-compose.yml` | `http://languagetool:8010` |
+| `DATABASE_URL` | Set in `docker-compose.yml` for Lexory-in-Docker (`postgres:5432`) | Async SQLAlchemy URL, e.g. `postgresql+asyncpg://user:pass@host:port/db` |
+
+### Database schema and Alembic
+
+Relational data lives in **PostgreSQL** (see `storage/models.py`). **SQLAlchemy 2** (async) with **asyncpg** is used at runtime. **Alembic** owns schema versions: revision scripts live under `alembic/versions/`, and `alembic.ini` points at the `alembic` env in this repo.
+
+On application startup, the service runs `alembic upgrade head` (using a **sync** driver URL derived from `DATABASE_URL` for the migration process). You can also run migrations manually from the project root, with `DATABASE_URL` set:
+
+```bash
+alembic upgrade head
+```
+
+Current tables (evolve with migrations) include, among others: **`mistake_occurrences`**, **`lesson_artifacts`**, **`exercise_attempts`**, **`user_scoring_events`**.
 
 ---
 
@@ -327,28 +333,31 @@ The LLM response is returned in the properties `topic`, `explanation`, and `exer
 
 This application uses the following third-party components:
 
-### Core Components
+### Core components
 
-Qdrant Server (Apache 2.0)
-Ollama
-Qwen2.5 1.5B Instruct (Ollama: `qwen2.5:1.5b-instruct`)
-SQLite (Public Domain)
-Docker (Apache 2.0)
+- Qdrant Server (Apache 2.0)
+- Ollama
+- Qwen2.5 1.5B Instruct (Ollama: `qwen2.5:1.5b-instruct`)
+- PostgreSQL (PostgreSQL License)
+- Docker (Apache 2.0)
 
-### Python Libraries
+### Python libraries
 
-FastAPI (MIT)
-Pydantic (MIT)
-language-tool-python (LGPL 2.1+)
-SQLAlchemy (MIT)
-sentence-transformers (Apache 2.0)
-PyTorch (BSD-style)
-Uvicorn (BSD)
-NumPy (BSD)
-requests (Apache)
-python-dotenv (BSD)
-Polars (Apache 2.0)
-Qdrant Client (Apache 2.0)
+- FastAPI (MIT)
+- Pydantic (MIT)
+- language-tool-python (LGPL 2.1+)
+- SQLAlchemy (MIT)
+- Alembic (MIT) — database migrations
+- asyncpg (Apache 2.0) — async PostgreSQL driver
+- psycopg (GNU LGPL) — sync driver for Alembic
+- sentence-transformers (Apache 2.0)
+- PyTorch (BSD-style)
+- Uvicorn (BSD)
+- NumPy (BSD)
+- requests (Apache)
+- python-dotenv (BSD)
+- Polars (Apache 2.0)
+- Qdrant Client (Apache 2.0)
 
 See THIRD_PARTY_LICENSES.txt for full license information.
 

@@ -105,6 +105,41 @@ copies of the Software, subject to the conditions of the MIT License.
 
 ---
 
+## Alembic
+
+Project: Alembic
+License: MIT License
+Source: https://github.com/sqlalchemy/alembic
+
+Copyright (c) 2009–present, Michael Bayer and contributors
+
+Alembic is used to manage PostgreSQL schema migrations. Licensed under the MIT License.
+
+---
+
+## asyncpg
+
+Project: asyncpg
+License: Apache License 2.0
+Source: https://github.com/MagicStack/asyncpg
+
+Copyright (c) 2015–present, MagicStack
+
+Licensed under the Apache License, Version 2.0.
+asyncpg is the async driver used by SQLAlchemy to connect to PostgreSQL at application runtime.
+
+---
+
+## psycopg (psycopg3)
+
+Project: Psycopg
+License: GNU Lesser General Public License v3.0 (LGPL); see the project’s LICENSE
+Source: https://github.com/psycopg/psycopg
+
+psycopg is used in synchronous mode to run Alembic migrations. The app derives a sync `DATABASE_URL` for Alembic (see `get_sync_migrations_url` in `storage/database.py`).
+
+---
+
 ## Polars
 
 Project: Polars

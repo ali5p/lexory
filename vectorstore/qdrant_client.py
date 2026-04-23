@@ -7,13 +7,14 @@ from qdrant_client import QdrantClient
 from qdrant_client.local.qdrant_local import QdrantLocal
 from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 from qdrant_client.models import (
+    Direction,
     Distance,
-    VectorParams,
     Filter,
     FieldCondition,
     MatchValue,
     OrderBy,
     PointStruct,
+    VectorParams,
 )
 
 # qdrant-client 1.9+ uses dict-based named vectors directly
@@ -340,6 +341,7 @@ class QdrantStore:
     ) -> list[dict]:
         """
         Scroll points filtered by user_id + mistake_type (for fallback lesson by aggregate score).
+        Ordered by payload ``detected_at`` descending so the latest example wins.
         """
         query_filter = Filter(
             must=[
@@ -354,6 +356,10 @@ class QdrantStore:
                 collection_name=collection_name,
                 scroll_filter=query_filter,
                 limit=limit,
+                order_by=OrderBy(
+                    key="detected_at",
+                    direction=Direction.DESC,
+                ),
                 with_payload=True,
                 with_vectors=["context"],
             )
