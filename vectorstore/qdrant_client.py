@@ -159,11 +159,24 @@ class QdrantStore:
         # Payload index for payload field detected_at (ordering / filters).
         if isinstance(self.client, QdrantLocal):
             return  # Payload indexes have no effect in local Qdrant
+        schema = getattr(self.client.get_collection(collection_name), "payload_schema", {})
+        detected_at = schema.get("detected_at") if isinstance(schema, dict) else None
+        data_type = str(getattr(detected_at, "data_type", "")).lower()
+        if detected_at is not None and "datetime" not in data_type:
+            _log.info(
+                "Recreating %s.detected_at payload index as datetime (was %s)",
+                collection_name,
+                data_type or "unknown",
+            )
+            self.client.delete_payload_index(
+                collection_name=collection_name,
+                field_name="detected_at",
+            )
         try:
             self.client.create_payload_index(
                 collection_name=collection_name,
                 field_name="detected_at",
-                field_schema="keyword",
+                field_schema="datetime",
             )
         except UnexpectedResponse as e:
             if "already exists" in str(e).lower():
@@ -347,7 +360,8 @@ class QdrantStore:
     ) -> list[dict]:
         """
         Scroll points filtered by user_id + mistake_type (for fallback lesson by aggregate score).
-        Ordered by payload ``detected_at`` descending so the latest example wins.
+        Requires a Qdrant datetime payload index on ``detected_at`` so the latest
+        example wins by ordered scroll.
         """
         query_filter = Filter(
             must=[
@@ -371,7 +385,7 @@ class QdrantStore:
             )
         except UnexpectedResponse as e:
             _log.warning(
-                "scroll_by_mistake_type: Qdrant UnexpectedResponse (%s)",
+                "scroll_by_mistake_type: ordered scroll failed (%s)",
                 e,
                 exc_info=True,
             )
