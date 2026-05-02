@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from rag.service import RAGService
 from rag.embedder import Embedder
+from storage.models import MistakeOccurrence, UserScoringEvent
 from vectorstore.qdrant_client import QdrantStore
 
 
@@ -27,9 +28,18 @@ def mock_embedder():
 @pytest.fixture
 def mock_session():
     session = AsyncMock()
+    session.add = Mock()
     session.flush = AsyncMock()
     session.commit = AsyncMock()
     return session
+
+
+def _added_row(mock_session, model_type):
+    for call in mock_session.add.call_args_list:
+        row = call.args[0]
+        if isinstance(row, model_type):
+            return row
+    raise AssertionError(f"{model_type.__name__} was not added")
 
 
 @pytest.fixture
@@ -85,10 +95,13 @@ async def test_deduplication_stage1_no_existing_examples(rag_service, mock_qdran
     assert example_point["payload"]["mistake_id"] == event["mistake_id"]
     assert example_point["payload"]["example_id"] == str(fixed_example_id)
 
-    mock_session.add.assert_called_once()
-    row = mock_session.add.call_args[0][0]
+    assert mock_session.add.call_count == 2
+    row = _added_row(mock_session, MistakeOccurrence)
     assert row.mistake_id == event["mistake_id"]
     assert row.example_id == str(fixed_example_id)
+    scoring_row = _added_row(mock_session, UserScoringEvent)
+    assert scoring_row.delta == 1.0
+    assert scoring_row.mistake_type == event["mistake_type"]
 
 
 @pytest.mark.asyncio
@@ -125,8 +138,10 @@ async def test_deduplication_stage2_high_similarity(rag_service, mock_qdrant, mo
     assert occurrence_point is not None
     assert occurrence_point["id"] == event["mistake_id"]
 
-    row = mock_session.add.call_args[0][0]
+    row = _added_row(mock_session, MistakeOccurrence)
     assert row.example_id is None
+    scoring_row = _added_row(mock_session, UserScoringEvent)
+    assert scoring_row.delta == 1.0
 
 
 @pytest.mark.asyncio
@@ -166,5 +181,7 @@ async def test_deduplication_stage2_low_similarity(rag_service, mock_qdrant, moc
     assert example_point["id"] == event["mistake_id"]
     assert example_point["payload"]["example_id"] == str(fixed_example_id)
 
-    row = mock_session.add.call_args[0][0]
+    row = _added_row(mock_session, MistakeOccurrence)
     assert row.example_id == str(fixed_example_id)
+    scoring_row = _added_row(mock_session, UserScoringEvent)
+    assert scoring_row.delta == 1.0

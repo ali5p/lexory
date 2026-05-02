@@ -31,6 +31,9 @@ class LessonArtifact(BaseModel):
     id: str = Field(alias="artifact_id")
     user_id: str
     session_id: Optional[str]
+    topic: str = ""
+    explanation: str = ""
+    exercises: List[str] = Field(default_factory=list)
     mistake_types_covered: List[str]
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -53,7 +56,6 @@ class SubmitResponse(BaseModel):
     lesson_artifact_id: str
     lesson: "LessonResponse"
     context: "ContextAssembly"
-    status: str
 
 
 class DetectedMistakeExample(BaseModel):

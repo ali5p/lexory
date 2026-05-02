@@ -488,6 +488,7 @@ class RAGService:
             user_id=user_id,
             session_id=session_id,
             context=context,
+            query_embedding=query_embedding,
         )
 
         return user_text_id, session_id, artifact_id, lesson, context
@@ -684,10 +685,14 @@ class RAGService:
         if not user_id:
             return []
         results = self.qdrant.search(
-            collection_name="lesson_artifact_embeddings",
-            vector=query_embedding,
+            collection_name="lesson_artifact_points",
+            vector=None,
             limit=10,
             filters=self._user_filter(user_id),
+            named_query={
+                "vector_name": "mistake_context",
+                "vector": query_embedding,
+            },
         )
 
         artifacts = []
@@ -704,11 +709,15 @@ class RAGService:
                 continue
 
             seen_artifact_ids.add(artifact_id)
+            explanation = payload.get("explanation", payload.get("content", ""))
+            topic = payload.get("topic", payload.get("lesson_type", ""))
             artifacts.append(
                 {
                     "artifact_id": artifact_id,
-                    "content": payload.get("content", ""),
-                    "lesson_type": payload.get("lesson_type", ""),
+                    "content": explanation,
+                    "topic": topic,
+                    "explanation": explanation,
+                    "exercises": payload.get("exercises", []),
                     "approach_type": payload.get("approach_type", ""),
                     "created_at": payload.get("created_at", ""),
                     "similarity_score": result["score"],
@@ -764,6 +773,7 @@ class RAGService:
         user_id: str,
         session_id: Optional[str],
         context: ContextAssembly,
+        query_embedding: List[float],
     ) -> str:
         artifact_id = str(uuid.uuid4())
         created_at = datetime.now(timezone.utc)
@@ -778,9 +788,9 @@ class RAGService:
             "artifact_id": artifact_id,
             "user_id": user_id,
             "session_id": session_id or "",
-            "content": lesson.explanation,
+            "topic": lesson.topic,
+            "explanation": lesson.explanation,
             "exercises": lesson.exercises,
-            "lesson_type": lesson.topic,
             "approach_type": lesson.approach_type,
             "mistake_types_covered": mistake_types_covered,
             "created_at": created_at.isoformat(),
@@ -790,15 +800,17 @@ class RAGService:
             await repo.upsert_artifact(session, artifact_payload)
             await session.commit()
 
-        content_for_embedding = self._artifact_embedding_text(lesson)
-
-        artifact_vector = self.embedder.embed_single(content_for_embedding)
+        explanation_text = self._artifact_embedding_text(lesson)
+        explanation_vector = self.embedder.embed_single(explanation_text)
         self.qdrant.upsert(
-            collection_name="lesson_artifact_embeddings",
+            collection_name="lesson_artifact_points",
             points=[
                 {
                     "id": artifact_id,
-                    "vector": artifact_vector,
+                    "vectors": {
+                        "mistake_context": query_embedding,
+                        "explanation": explanation_vector,
+                    },
                     "payload": artifact_payload,
                 }
             ],
@@ -808,7 +820,7 @@ class RAGService:
 
     @staticmethod
     def _artifact_embedding_text(lesson: LessonResponse) -> str:
-        """Text embedded for lesson_artifact_embeddings — explanation only (LLM or rule-based)."""
+        """Text embedded as the lesson_artifact_points explanation vector."""
         return (lesson.explanation or "").strip()
 
 

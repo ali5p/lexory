@@ -27,7 +27,6 @@ async def submit_and_lesson(
         lesson_artifact_id=lesson_artifact_id,
         lesson=lesson,
         context=context,
-        status="ok",
     )
 
 

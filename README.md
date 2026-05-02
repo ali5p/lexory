@@ -105,36 +105,11 @@ Once the system pipeline is stable, retrieval quality improvements are planned.
 
 # Known Issues / Tradeoffs
 
-### Retrieval bug
-
-`recently_used_explanations` currently returns an empty list due to an issue in `_retrieve_lesson_artifacts`.
-
-Planned fix:
-
-- switch to Named Vectors with 64-dim `mistake_logic` vector + 384-dim artifact_vector or single `mistake_logic` vector + lesson artifacts in payload 
-- retrieve by `mistake_logic` vector first
-- then filter by most recent examples
-
----
-
 ### LearningSummaryBatch (Not Integrated Yet)
 
 LearningSummaryBatch is currently unused. It is planned to be part of the context assembly and the lesson generation logic once the taxonomy is stabilized.
 
 ---
-
-### Local vector query limitation
-
-The relational store holds occurrence metadata, lesson artifacts, exercise attempts, and **incremental user scoring** rows used for time-based and aggregate queries.
-
-A typical fallback workflow (when session candidates are empty) uses aggregate scores, then Qdrant:
-
-```
-PostgreSQL (user_scoring_events, per mistake_type)
-→ top mistake_type
-Qdrant (mistake_examples, filter by user_id + mistake_type)
-```
-
 
 
 ## Project Status
@@ -220,9 +195,9 @@ flowchart TB
     J[Session candidates]
     K[Fallback: PostgreSQL scores then Qdrant by mistake_type]
     L[(mistake_examples)]
-    M[(lesson_artifact_embeddings)]
+    M[(lesson_artifact_points)]
     N[(learning_summary_embeddings)]
-    O[(lesson_artifact_embeddings — persist new lesson)]
+    O[(lesson_artifact_points — persist new lesson)]
 
     A --> B
     B -- Yes --> C
@@ -244,7 +219,7 @@ flowchart TB
     I --> O
 ```
 
-*Query embedding*: from session candidates (from ingest) or **fallback** when there are no candidates: top `mistake_type` by clamped user score in PostgreSQL (`user_scoring_events`, tie-break: latest `occurred_at`), then the **latest** `mistake_examples` point for that type (Qdrant scroll ordered by payload `detected_at` desc). *Context*: primary mistake + similar lesson artifacts + learning summaries. *Lesson*: approach handler (LLM or stub) builds explanation and exercises.
+*Query embedding*: from session candidates (from ingest) or **fallback** when there are no candidates: top `mistake_type` by clamped user score in PostgreSQL (`user_scoring_events`, tie-break: latest `occurred_at`), then the **latest** `mistake_examples` point for that type (Qdrant scroll ordered by payload `detected_at` desc). *Context*: primary mistake + lesson artifacts retrieved by the `mistake_context` named vector + learning summaries. *Lesson*: approach handler (LLM or stub) builds explanation and exercises. Persisted lesson artifacts store structured SQL fields (`topic`, `explanation`, `exercises`) and Qdrant named vectors (`mistake_context`, `explanation`).
 
 ## Running with Docker
 

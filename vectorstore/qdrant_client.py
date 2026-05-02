@@ -77,7 +77,6 @@ class QdrantStore:
         # Standard single-vector collections (384-dim)
         standard_collections = [
             "learning_summary_embeddings",
-            "lesson_artifact_embeddings",
         ]
         for collection_name in standard_collections:
             try:
@@ -115,9 +114,16 @@ class QdrantStore:
                 "mistake_logic": (64, Distance.COSINE),
             },
         )
+        self._ensure_named_collection(
+            "lesson_artifact_points",
+            {
+                "mistake_context": (384, Distance.COSINE),
+                "explanation": (384, Distance.COSINE),
+            },
+        )
         self._ensure_user_id_index("mistake_occurrences")
         self._ensure_user_id_index("learning_summary_embeddings")
-        self._ensure_user_id_index("lesson_artifact_embeddings")
+        self._ensure_user_id_index("lesson_artifact_points")
     
     def _ensure_named_collection(
         self, collection_name: str, named_vectors: Dict[str, tuple[int, Distance]]
