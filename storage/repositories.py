@@ -152,6 +152,38 @@ async def top_mistake_types_by_clamped_score(
     return [row[0] for row in r.all()]
 
 
+async def clamped_scores_by_mistake_type(
+    session: AsyncSession,
+    user_id: str,
+    mistake_types: Sequence[str],
+) -> dict[str, tuple[float, str]]:
+    """
+    Scores for the requested mistake_types only.
+    Returns mistake_type -> (clamped_score, latest_occurred_at).
+    """
+    unique_types = sorted({mt for mt in mistake_types if mt})
+    if not unique_types:
+        return {}
+
+    stmt = (
+        select(
+            UserScoringEvent.mistake_type,
+            func.greatest(0, func.sum(UserScoringEvent.delta)).label("score"),
+            func.max(UserScoringEvent.occurred_at).label("last_at"),
+        )
+        .where(
+            UserScoringEvent.user_id == user_id,
+            UserScoringEvent.mistake_type.in_(unique_types),
+        )
+        .group_by(UserScoringEvent.mistake_type)
+    )
+    r = await session.execute(stmt)
+    return {
+        row[0]: (float(row[1] or 0), str(row[2] or ""))
+        for row in r.all()
+    }
+
+
 async def has_positive_clamped_mistake_type(
     session: AsyncSession, user_id: str
 ) -> bool:

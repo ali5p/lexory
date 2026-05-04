@@ -65,6 +65,7 @@ class RAGService:
         self.session_factory = session_factory
         self.text_store = InMemoryTextStore()
         self.max_context_items = 10
+        self.max_primary_mistakes = 3
         self.min_similarity_score = 0.5
         self.semantic_dedup_threshold = 0.9
         _llm = None
@@ -431,9 +432,11 @@ class RAGService:
         else:
             session_id = str(uuid.uuid4())
 
-        query_embedding, primary_example = await self._get_query_embedding_and_primary_example(
-            session_candidate_points=session_candidate_points,
-            user_id=user_id,
+        query_embedding, primary_examples = (
+            await self._get_query_embedding_and_primary_examples(
+                session_candidate_points=session_candidate_points,
+                user_id=user_id,
+            )
         )
         user_filter = {"user_id": user_id}
 
@@ -480,7 +483,7 @@ class RAGService:
             )
 
         context = self._retrieve_staged_context(
-            query_embedding, user_filter, primary_example
+            query_embedding, user_filter, primary_examples
         )
         lesson = self._construct_lesson(context)
         artifact_id = await self._persist_lesson_artifact(
@@ -581,7 +584,9 @@ class RAGService:
         mistake_type = event.get("mistake_type", "error")
         return f"Detected {mistake_type} mistake. Review the sentence structure."
 
-    async def _get_fallback_point(self, user_id: str) -> tuple[Optional[List[float]], Optional[dict]]:
+    async def _get_fallback_point(
+        self, user_id: str
+    ) -> tuple[Optional[List[float]], List[dict]]:
         """
         When there are no session_candidate_points: top-k mistake_type by clamped aggregate
         score (tie-break: latest occurred_at), then first mistake_examples point per type.
@@ -602,31 +607,82 @@ class RAGService:
                 vec = p.get("vectors", {}).get("context")
                 payload = p.get("payload", {})
                 if vec and len(vec) == 384:
-                    return list(vec), payload
+                    return list(vec), [payload]
 
-        return None, None
+        return None, []
 
-    async def _get_query_embedding_and_primary_example(
+    async def _get_query_embedding_and_primary_examples(
         self,
         session_candidate_points: List[dict],
         user_id: str,
-    ) -> tuple[Optional[List[float]], Optional[dict]]:
+    ) -> tuple[Optional[List[float]], List[dict]]:
         """
-        Returns (query_embedding, primary_example) for lesson context.
-        a) Session candidates: use first candidate's context_vector and payload.
+        Returns (query_embedding, primary_examples) for lesson context.
+        a) Session candidates: select top-k current-session mistake types by aggregate
+           user score, then use the highest-ranked context vector as the query vector.
         b) Fallback: _get_fallback_point (PostgreSQL occurrences with example_id → Qdrant).
-        c) Neither: (None, None) → no usable session context.
+        c) Neither: (None, []) → no usable session context.
         """
         points = session_candidate_points or []
         if points:
-            first = points[0]
-            vectors = first.get("vectors", {})
-            context_vec = vectors.get("context")
-            payload = first.get("payload", {})
+            selected = await self._select_scored_session_candidates(
+                points=points,
+                user_id=user_id,
+                limit=self.max_primary_mistakes,
+            )
+            first = selected[0] if selected else {}
+            context_vec = first.get("vectors", {}).get("context")
             if context_vec and len(context_vec) == 384:
-                return list(context_vec), payload
+                return list(context_vec), [
+                    p.get("payload", {}) for p in selected if p.get("payload")
+                ]
 
         return await self._get_fallback_point(user_id)
+
+    async def _select_scored_session_candidates(
+        self,
+        points: List[dict],
+        user_id: str,
+        limit: int,
+    ) -> List[dict]:
+        """
+        Pick current-session candidates ranked by the user's long-term scores.
+        Only candidates from this submission are eligible; scoring decides priority.
+        """
+        grouped: dict[str, dict] = {}
+        for idx, point in enumerate(points):
+            payload = point.get("payload", {})
+            mistake_type = str(payload.get("mistake_type", "") or "")
+            context_vec = point.get("vectors", {}).get("context")
+            if not mistake_type or not context_vec or len(context_vec) != 384:
+                continue
+            group = grouped.setdefault(
+                mistake_type,
+                {"point": point, "count": 0, "first_idx": idx},
+            )
+            group["count"] += 1
+
+        if not grouped:
+            return []
+
+        async with self.session_factory() as session:
+            scores = await repo.clamped_scores_by_mistake_type(
+                session,
+                user_id,
+                list(grouped.keys()),
+            )
+
+        ranked = sorted(
+            grouped.items(),
+            key=lambda item: (
+                scores.get(item[0], (0.0, ""))[0],
+                item[1]["count"],
+                scores.get(item[0], (0.0, ""))[1],
+                -item[1]["first_idx"],
+            ),
+            reverse=True,
+        )
+        return [data["point"] for _, data in ranked[:limit]]
 
     def _payload_to_detected_example(self, payload: dict) -> DetectedMistakeExample:
         """Format point payload for ContextAssembly detected_mistake_examples."""
@@ -646,11 +702,13 @@ class RAGService:
         self,
         query_embedding: List[float],
         user_filter: Dict[str, str],
-        primary_example: Optional[dict],
+        primary_examples: List[dict],
     ) -> ContextAssembly:
-        detected_mistake_examples = (
-            [self._payload_to_detected_example(primary_example)] if primary_example else []
-        )
+        detected_mistake_examples = [
+            self._payload_to_detected_example(payload)
+            for payload in primary_examples
+            if payload
+        ]
         recently_used_explanations = self._retrieve_lesson_artifacts(
             query_embedding, user_filter
         )
