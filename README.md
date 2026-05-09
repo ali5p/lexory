@@ -189,8 +189,8 @@ flowchart TB
     F[No-context lesson]
 
     G[_retrieve_staged_context]
-    H[_construct_lesson]
-    I[_persist_lesson_artifact]
+    H[Generate one lesson item per selected mistake]
+    I[_persist_lesson_artifact per item]
 
     J[Session candidates]
     K[Fallback: PostgreSQL scores then Qdrant by mistake_type]
@@ -219,7 +219,7 @@ flowchart TB
     I --> O
 ```
 
-*Query embedding*: from session candidates (from ingest) or **fallback** when there are no candidates: top `mistake_type` by clamped user score in PostgreSQL (`user_scoring_events`, tie-break: latest `occurred_at`), then the **latest** `mistake_examples` point for that type (Qdrant scroll ordered by payload `detected_at` desc). *Context*: primary mistake + lesson artifacts retrieved by the `mistake_context` named vector + learning summaries. *Lesson*: approach handler (LLM or stub) builds explanation and exercises. Persisted lesson artifacts store structured SQL fields (`topic`, `explanation`, `exercises`) and Qdrant named vectors (`mistake_context`, `explanation`).
+*Query points*: from session candidates (from ingest), ranked by the user's clamped `user_scoring_events` score for the mistake types present in the current text; or **fallback** when there are no candidates: top `mistake_type` by clamped user score in PostgreSQL (`user_scoring_events`, tie-break: latest `occurred_at`), then the **latest** `mistake_examples` point for that type (Qdrant scroll ordered by payload `detected_at` desc). *Context*: selected mistakes + lesson artifacts retrieved by the `mistake_context` named vector + learning summaries. *Lessons*: Lexory generates one atomic lesson item per selected mistake and returns them grouped by `session_id`. Persisted lesson artifacts store structured SQL fields (`topic`, `explanation`, `exercises`) and Qdrant named vectors (`mistake_context`, `explanation`).
 
 ## Running with Docker
 
@@ -300,7 +300,7 @@ Fill out fields `text` and `user_id`, then click “Execute”.
 ### 3. Get the response
 <img src="docs/screenshots/swagger_ui/2.png" width="600"/>
 
-The LLM response is returned in the properties `topic`, `explanation`, and `exercise`.
+The LLM response is returned as a `lessons` array. Each item has its own `lesson_artifact_id` and a `lesson` object with `topic`, `explanation`, `exercises`, and `approach_type`.
 
 ---
 

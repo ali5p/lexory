@@ -50,14 +50,6 @@ class SubmitRequest(BaseModel):
     user_id: str
 
 
-class SubmitResponse(BaseModel):
-    user_text_id: Optional[str] = None
-    session_id: str
-    lesson_artifact_id: str
-    lesson: "LessonResponse"
-    context: "ContextAssembly"
-
-
 class DetectedMistakeExample(BaseModel):
     """Primary mistake surfaced in submit response context (for API / debugging)."""
 
@@ -86,6 +78,18 @@ class LessonResponse(BaseModel):
     explanation: str
     exercises: list[str]
     approach_type: str
+
+
+class LessonItemResponse(BaseModel):
+    lesson_artifact_id: Optional[str] = None
+    lesson: LessonResponse
+
+
+class SubmitResponse(BaseModel):
+    user_text_id: Optional[str] = None
+    session_id: str
+    lessons: List[LessonItemResponse]
+    context: "ContextAssembly"
 
 
 class QueryResponse(BaseModel):

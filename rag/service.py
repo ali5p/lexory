@@ -10,6 +10,7 @@ from core.models import (
     ContextAssembly,
     DetectedMistakeExample,
     ExerciseAttempt,
+    LessonItemResponse,
     LessonResponse,
     UserText,
 )
@@ -416,10 +417,10 @@ class RAGService:
 
     async def submit_and_lesson(
         self, text: str, user_id: str
-    ) -> tuple[Optional[str], str, str, "LessonResponse", "ContextAssembly"]:
+    ) -> tuple[Optional[str], str, List["LessonItemResponse"], "ContextAssembly"]:
         """
         Combined ingest + lesson generation. Single flow trigger.
-        Returns: (user_text_id, session_id, lesson_artifact_id, lesson, context)
+        Returns: (user_text_id, session_id, lesson_items, context)
         """
         session_id: str
         user_text_id: Optional[str] = None
@@ -432,15 +433,15 @@ class RAGService:
         else:
             session_id = str(uuid.uuid4())
 
-        query_embedding, primary_examples = (
-            await self._get_query_embedding_and_primary_examples(
+        query_points = (
+            await self._get_query_points_and_primary_examples(
                 session_candidate_points=session_candidate_points,
                 user_id=user_id,
             )
         )
         user_filter = {"user_id": user_id}
 
-        if query_embedding is None:
+        if not query_points:
             async with self.session_factory() as s:
                 has_rows = await repo.has_any_user_scoring_event(s, user_id)
                 has_graded = await repo.has_nonzero_user_scoring_event(s, user_id)
@@ -477,24 +478,19 @@ class RAGService:
             return (
                 user_text_id,
                 session_id,
-                str(uuid.uuid4()),
-                no_context_lesson,
+                [LessonItemResponse(lesson_artifact_id=None, lesson=no_context_lesson)],
                 empty_context,
             )
 
-        context = self._retrieve_staged_context(
-            query_embedding, user_filter, primary_examples
-        )
-        lesson = self._construct_lesson(context)
-        artifact_id = await self._persist_lesson_artifact(
-            lesson=lesson,
+        full_context = self._context_from_query_points(query_points, user_filter)
+        lesson_items = await self._generate_atomic_lesson_items(
+            query_points=query_points,
             user_id=user_id,
             session_id=session_id,
-            context=context,
-            query_embedding=query_embedding,
+            user_filter=user_filter,
         )
 
-        return user_text_id, session_id, artifact_id, lesson, context
+        return user_text_id, session_id, lesson_items, full_context
 
 
     async def process_exercise_attempt(self, attempt: ExerciseAttempt) -> dict:
@@ -584,16 +580,15 @@ class RAGService:
         mistake_type = event.get("mistake_type", "error")
         return f"Detected {mistake_type} mistake. Review the sentence structure."
 
-    async def _get_fallback_point(
-        self, user_id: str
-    ) -> tuple[Optional[List[float]], List[dict]]:
+    async def _get_fallback_points(self, user_id: str) -> List[dict]:
         """
         When there are no session_candidate_points: top-k mistake_type by clamped aggregate
         score (tie-break: latest occurred_at), then first mistake_examples point per type.
         """
+        out: List[dict] = []
         async with self.session_factory() as session:
             top_types = await repo.top_mistake_types_by_clamped_score(
-                session, user_id, k=2
+                session, user_id, k=self.max_primary_mistakes
             )
         for mt in top_types:
             points = self.qdrant.scroll_by_mistake_type(
@@ -605,39 +600,32 @@ class RAGService:
             if points:
                 p = points[0]
                 vec = p.get("vectors", {}).get("context")
-                payload = p.get("payload", {})
                 if vec and len(vec) == 384:
-                    return list(vec), [payload]
+                    out.append(p)
 
-        return None, []
+        return out
 
-    async def _get_query_embedding_and_primary_examples(
+    async def _get_query_points_and_primary_examples(
         self,
         session_candidate_points: List[dict],
         user_id: str,
-    ) -> tuple[Optional[List[float]], List[dict]]:
+    ) -> List[dict]:
         """
-        Returns (query_embedding, primary_examples) for lesson context.
+        Returns selected point-like dicts for lesson generation.
         a) Session candidates: select top-k current-session mistake types by aggregate
-           user score, then use the highest-ranked context vector as the query vector.
-        b) Fallback: _get_fallback_point (PostgreSQL occurrences with example_id → Qdrant).
-        c) Neither: (None, []) → no usable session context.
+           user score.
+        b) Fallback: _get_fallback_points (PostgreSQL scores → Qdrant mistake_examples).
+        c) Neither: [] → no usable session context.
         """
         points = session_candidate_points or []
         if points:
-            selected = await self._select_scored_session_candidates(
+            return await self._select_scored_session_candidates(
                 points=points,
                 user_id=user_id,
                 limit=self.max_primary_mistakes,
             )
-            first = selected[0] if selected else {}
-            context_vec = first.get("vectors", {}).get("context")
-            if context_vec and len(context_vec) == 384:
-                return list(context_vec), [
-                    p.get("payload", {}) for p in selected if p.get("payload")
-                ]
 
-        return await self._get_fallback_point(user_id)
+        return await self._get_fallback_points(user_id)
 
     async def _select_scored_session_candidates(
         self,
@@ -697,6 +685,66 @@ class RAGService:
             examples=[example_text] if example_text else [],
             rule_message=str(payload.get("rule_message", "") or ""),
         )
+
+    def _context_from_query_points(
+        self,
+        query_points: List[dict],
+        user_filter: Dict[str, str],
+    ) -> ContextAssembly:
+        first_vec = query_points[0].get("vectors", {}).get("context") if query_points else None
+        primary_examples = [
+            point.get("payload", {}) for point in query_points if point.get("payload")
+        ]
+        if first_vec and len(first_vec) == 384:
+            return self._retrieve_staged_context(
+                list(first_vec),
+                user_filter,
+                primary_examples,
+            )
+        return ContextAssembly(
+            detected_mistake_examples=[
+                self._payload_to_detected_example(payload)
+                for payload in primary_examples
+                if payload
+            ],
+            recently_used_explanations=[],
+            long_term_dynamics=[],
+        )
+
+    async def _generate_atomic_lesson_items(
+        self,
+        query_points: List[dict],
+        user_id: str,
+        session_id: str,
+        user_filter: Dict[str, str],
+    ) -> List[LessonItemResponse]:
+        items: List[LessonItemResponse] = []
+        for point in query_points:
+            context_vec = point.get("vectors", {}).get("context")
+            payload = point.get("payload", {})
+            if not context_vec or len(context_vec) != 384 or not payload:
+                continue
+
+            item_context = self._retrieve_staged_context(
+                list(context_vec),
+                user_filter,
+                [payload],
+            )
+            lesson = self._construct_lesson(item_context)
+            artifact_id = await self._persist_lesson_artifact(
+                lesson=lesson,
+                user_id=user_id,
+                session_id=session_id,
+                context=item_context,
+                query_embedding=list(context_vec),
+            )
+            items.append(
+                LessonItemResponse(
+                    lesson_artifact_id=artifact_id,
+                    lesson=lesson,
+                )
+            )
+        return items
 
     def _retrieve_staged_context(
         self,
