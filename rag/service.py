@@ -439,6 +439,7 @@ class RAGService:
                 user_id=user_id,
             )
         )
+        query_points = self._unique_query_points_by_lesson_target(query_points)
         user_filter = {"user_id": user_id}
 
         if not query_points:
@@ -627,6 +628,27 @@ class RAGService:
 
         return await self._get_fallback_points(user_id)
 
+    @staticmethod
+    def _lesson_target_key(payload: dict) -> str:
+        mistake_type = str(payload.get("mistake_type", "") or "")
+        rule_id = str(payload.get("rule_id", "") or "")
+        if mistake_type == "unmapped" and rule_id:
+            return f"{mistake_type}:{rule_id}"
+        return mistake_type or rule_id or str(payload.get("mistake_id", ""))
+
+    @classmethod
+    def _unique_query_points_by_lesson_target(cls, points: List[dict]) -> List[dict]:
+        unique: List[dict] = []
+        seen: Set[str] = set()
+        for point in points:
+            payload = point.get("payload", {})
+            key = cls._lesson_target_key(payload) or str(id(point))
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(point)
+        return unique
+
     async def _select_scored_session_candidates(
         self,
         points: List[dict],
@@ -641,36 +663,67 @@ class RAGService:
         for idx, point in enumerate(points):
             payload = point.get("payload", {})
             mistake_type = str(payload.get("mistake_type", "") or "")
+            rule_id = str(payload.get("rule_id", "") or "")
+            lesson_key = self._lesson_target_key(payload)
             context_vec = point.get("vectors", {}).get("context")
-            if not mistake_type or not context_vec or len(context_vec) != 384:
+            if not lesson_key or not context_vec or len(context_vec) != 384:
                 continue
             group = grouped.setdefault(
-                mistake_type,
-                {"point": point, "count": 0, "first_idx": idx},
+                lesson_key,
+                {
+                    "point": point,
+                    "count": 0,
+                    "last_idx": idx,
+                    "mistake_type": mistake_type,
+                    "rule_id": rule_id,
+                },
             )
             group["count"] += 1
+            # Within one lesson target, use the latest occurrence in the submitted text.
+            group["point"] = point
+            group["last_idx"] = idx
 
         if not grouped:
             return []
 
+        mistake_types = [
+            data["mistake_type"] for data in grouped.values() if data["mistake_type"]
+        ]
         async with self.session_factory() as session:
             scores = await repo.clamped_scores_by_mistake_type(
                 session,
                 user_id,
-                list(grouped.keys()),
+                mistake_types,
+            )
+            rule_scores = await repo.clamped_scores_by_mistake_type_and_rule(
+                session,
+                user_id,
+                mistake_types,
             )
 
         ranked = sorted(
             grouped.items(),
             key=lambda item: (
-                scores.get(item[0], (0.0, ""))[0],
+                self._score_for_lesson_target(item[1], scores, rule_scores)[0],
                 item[1]["count"],
-                scores.get(item[0], (0.0, ""))[1],
-                -item[1]["first_idx"],
+                self._score_for_lesson_target(item[1], scores, rule_scores)[1],
+                item[1]["last_idx"],
             ),
             reverse=True,
         )
         return [data["point"] for _, data in ranked[:limit]]
+
+    @staticmethod
+    def _score_for_lesson_target(
+        target: dict,
+        type_scores: dict[str, tuple[float, str]],
+        rule_scores: dict[tuple[str, str], tuple[float, str]],
+    ) -> tuple[float, str]:
+        mistake_type = str(target.get("mistake_type", "") or "")
+        rule_id = str(target.get("rule_id", "") or "")
+        if mistake_type == "unmapped" and rule_id:
+            return rule_scores.get((mistake_type, rule_id), (0.0, ""))
+        return type_scores.get(mistake_type, (0.0, ""))
 
     def _payload_to_detected_example(self, payload: dict) -> DetectedMistakeExample:
         """Format point payload for ContextAssembly detected_mistake_examples."""
@@ -691,24 +744,47 @@ class RAGService:
         query_points: List[dict],
         user_filter: Dict[str, str],
     ) -> ContextAssembly:
-        first_vec = query_points[0].get("vectors", {}).get("context") if query_points else None
         primary_examples = [
             point.get("payload", {}) for point in query_points if point.get("payload")
         ]
-        if first_vec and len(first_vec) == 384:
-            return self._retrieve_staged_context(
-                list(first_vec),
-                user_filter,
-                primary_examples,
-            )
+        detected_mistake_examples = [
+            self._payload_to_detected_example(payload)
+            for payload in primary_examples
+            if payload
+        ]
+        recently_used_explanations: List[dict] = []
+        long_term_dynamics: List[dict] = []
+        seen_artifact_ids: Set[str] = set()
+        seen_summary_ids: Set[str] = set()
+
+        for point in query_points:
+            context_vec = point.get("vectors", {}).get("context")
+            payload = point.get("payload", {})
+            if not context_vec or len(context_vec) != 384:
+                continue
+
+            for artifact in self._retrieve_lesson_artifacts(
+                list(context_vec), user_filter, target_payload=payload
+            ):
+                artifact_id = str(artifact.get("artifact_id", "") or "")
+                if artifact_id and artifact_id not in seen_artifact_ids:
+                    seen_artifact_ids.add(artifact_id)
+                    recently_used_explanations.append(artifact)
+
+            for summary in self._retrieve_learning_summaries(
+                list(context_vec), user_filter
+            ):
+                summary_id = str(summary.get("id", "") or summary.get("content", ""))
+                if summary_id and summary_id not in seen_summary_ids:
+                    seen_summary_ids.add(summary_id)
+                    long_term_dynamics.append(summary)
+
         return ContextAssembly(
-            detected_mistake_examples=[
-                self._payload_to_detected_example(payload)
-                for payload in primary_examples
-                if payload
+            detected_mistake_examples=detected_mistake_examples,
+            recently_used_explanations=recently_used_explanations[
+                : self.max_context_items
             ],
-            recently_used_explanations=[],
-            long_term_dynamics=[],
+            long_term_dynamics=long_term_dynamics[: self.max_context_items],
         )
 
     async def _generate_atomic_lesson_items(
@@ -719,11 +795,17 @@ class RAGService:
         user_filter: Dict[str, str],
     ) -> List[LessonItemResponse]:
         items: List[LessonItemResponse] = []
+        seen_lesson_targets: Set[str] = set()
         for point in query_points:
             context_vec = point.get("vectors", {}).get("context")
             payload = point.get("payload", {})
             if not context_vec or len(context_vec) != 384 or not payload:
                 continue
+            lesson_key = self._lesson_target_key(payload)
+            if lesson_key in seen_lesson_targets:
+                continue
+            if lesson_key:
+                seen_lesson_targets.add(lesson_key)
 
             item_context = self._retrieve_staged_context(
                 list(context_vec),
@@ -758,7 +840,9 @@ class RAGService:
             if payload
         ]
         recently_used_explanations = self._retrieve_lesson_artifacts(
-            query_embedding, user_filter
+            query_embedding,
+            user_filter,
+            target_payload=primary_examples[0] if primary_examples else None,
         )
         long_term_dynamics = self._retrieve_learning_summaries(
             query_embedding, user_filter
@@ -786,15 +870,18 @@ class RAGService:
         self,
         query_embedding: List[float],
         user_filter: Dict[str, str],
+        target_payload: Optional[dict] = None,
+        limit: int = 1,
     ) -> List[dict]:
         user_id = user_filter.get("user_id")
         if not user_id:
             return []
+        filters = self._lesson_artifact_filters(user_id, target_payload)
         results = self.qdrant.search(
             collection_name="lesson_artifact_points",
             vector=None,
-            limit=10,
-            filters=self._user_filter(user_id),
+            limit=max(limit, 5),
+            filters=filters,
             named_query={
                 "vector_name": "mistake_context",
                 "vector": query_embedding,
@@ -816,24 +903,34 @@ class RAGService:
 
             seen_artifact_ids.add(artifact_id)
             explanation = payload.get("explanation", payload.get("content", ""))
-            topic = payload.get("topic", payload.get("lesson_type", ""))
             artifacts.append(
                 {
                     "artifact_id": artifact_id,
-                    "content": explanation,
-                    "topic": topic,
                     "explanation": explanation,
-                    "exercises": payload.get("exercises", []),
                     "approach_type": payload.get("approach_type", ""),
-                    "created_at": payload.get("created_at", ""),
                     "similarity_score": result["score"],
                 }
             )
 
-            if len(artifacts) >= 5:
+            if len(artifacts) >= limit:
                 break
 
         return artifacts
+
+    def _lesson_artifact_filters(
+        self,
+        user_id: str,
+        target_payload: Optional[dict],
+    ) -> Dict[str, Any]:
+        extra: Dict[str, Any] = {}
+        if target_payload:
+            mistake_type = str(target_payload.get("mistake_type", "") or "")
+            rule_id = str(target_payload.get("rule_id", "") or "")
+            if mistake_type:
+                extra["mistake_type"] = mistake_type
+            if mistake_type == "unmapped" and rule_id:
+                extra["rule_id"] = rule_id
+        return self._user_filter(user_id, extra)
 
     def _retrieve_learning_summaries(
         self,
@@ -889,11 +986,19 @@ class RAGService:
             for p in context.detected_mistake_examples
             if p.mistake_type
         ]
+        primary_mistake = (
+            context.detected_mistake_examples[0]
+            if context.detected_mistake_examples
+            else None
+        )
 
         artifact_payload = {
             "artifact_id": artifact_id,
             "user_id": user_id,
             "session_id": session_id or "",
+            "mistake_id": primary_mistake.mistake_id if primary_mistake else None,
+            "rule_id": primary_mistake.rule_id if primary_mistake else "",
+            "mistake_type": primary_mistake.mistake_type if primary_mistake else "",
             "topic": lesson.topic,
             "explanation": lesson.explanation,
             "exercises": lesson.exercises,

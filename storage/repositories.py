@@ -184,6 +184,42 @@ async def clamped_scores_by_mistake_type(
     }
 
 
+async def clamped_scores_by_mistake_type_and_rule(
+    session: AsyncSession,
+    user_id: str,
+    mistake_types: Sequence[str],
+) -> dict[tuple[str, str], tuple[float, str]]:
+    """
+    Scores grouped by mistake_type + rule_id. Used when a placeholder mistake_type
+    (e.g. "unmapped") is too broad to be a lesson target by itself.
+    """
+    unique_types = sorted({mt for mt in mistake_types if mt})
+    if not unique_types:
+        return {}
+
+    stmt = (
+        select(
+            UserScoringEvent.mistake_type,
+            UserScoringEvent.rule_id,
+            func.greatest(0, func.sum(UserScoringEvent.delta)).label("score"),
+            func.max(UserScoringEvent.occurred_at).label("last_at"),
+        )
+        .where(
+            UserScoringEvent.user_id == user_id,
+            UserScoringEvent.mistake_type.in_(unique_types),
+        )
+        .group_by(UserScoringEvent.mistake_type, UserScoringEvent.rule_id)
+    )
+    r = await session.execute(stmt)
+    return {
+        (str(row[0] or ""), str(row[1] or "")): (
+            float(row[2] or 0),
+            str(row[3] or ""),
+        )
+        for row in r.all()
+    }
+
+
 async def has_positive_clamped_mistake_type(
     session: AsyncSession, user_id: str
 ) -> bool:
