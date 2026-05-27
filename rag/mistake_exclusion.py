@@ -11,12 +11,15 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 # Type-based: same rule family as languagetool_pipeline (e.g. no rule_message for other/style;
-# "unlisted" = no mapping in assets).
+# "unlisted" = no mapping in assets; "unmapped" = mapped explicitly to low-pedagogical-value
+# bucket in assets/languagetool_to_mistaketype.json — proper names, brands, generic AI rules,
+# very rare niche rules).
 MISTAKE_TYPES_EXCLUDED_FOR_QDRANT: frozenset[str] = frozenset(
     (
         "other",
         "style",
         "unlisted",
+        "unmapped",
     )
 )
 
