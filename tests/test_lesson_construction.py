@@ -48,7 +48,6 @@ def test_construct_lesson_stub_returns_valid_structure(
         detected_mistake_examples=[
             DetectedMistakeExample(mistake_type="SUBJECT_VERB_AGREEMENT")
         ],
-        recently_used_explanations=[],
         long_term_dynamics=[],
     )
 
@@ -61,7 +60,6 @@ def test_construct_lesson_stub_returns_valid_structure(
     # Empty context must not crash (structural contract)
     empty_context = ContextAssembly(
         detected_mistake_examples=[],
-        recently_used_explanations=[],
         long_term_dynamics=[],
     )
     empty_lesson = rag_service._construct_lesson(empty_context)

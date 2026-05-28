@@ -34,11 +34,12 @@ LESSON_RESPONSE_JSON_SCHEMA: dict = {
 _SYSTEM_LESSON_INSTRUCTIONS = """You are an English teacher. Your task is to produce ONE short grammar lesson as structured JSON only.
 
 The user message will contain:
+- A mistake category (Lexory taxonomy label).
 - A rule message from a grammar checker (hint).
 - A user sentence that contains the mistake.
 
 Steps:
-1. Identify the mistake using the rule message and the sentence.
+1. Identify the mistake using the category, rule message, and the sentence.
 2. Choose a clear grammar topic name.
 3. Write a concise lesson (plain language).
 4. Write one short exercise (similar style to the user's sentence).
@@ -49,11 +50,13 @@ Respond with JSON only (no markdown, no preamble). Use exactly these keys: topic
 Examples of the required shape (follow closely):
 
 ---
+Mistake category: articles
 Rule message: Did you mean "it's" (it is)?
 User sentence: Its a sunny day today.
 JSON:
 {"topic": "It's vs its", "lesson": "Use it's (with apostrophe) for it is or it has. Use its (no apostrophe) for possession, like his or hers.", "exercise": "Fill in: _____ (Its/It's) going to rain later."}
 ---
+Mistake category: subject_verb_agreement
 Rule message: Use third-person singular verb with he/she/it.
 User sentence: He walk to school every day.
 JSON:
@@ -62,8 +65,14 @@ JSON:
 """
 
 
-def _user_message(rule_message: str, example_sentence: str) -> str:
+def _user_message(
+    rule_message: str,
+    example_sentence: str,
+    mistake_type: str = "",
+) -> str:
+    category = mistake_type.strip() or "(none)"
     return (
+        f"Mistake category:\n{category}\n\n"
         f"Rule message from grammar checker:\n{rule_message or '(none)'}\n\n"
         f"User sentence with the mistake:\n{example_sentence or '(none)'}\n"
     )
@@ -114,15 +123,20 @@ class RuleBasedApproach(BaseApproach):
         self._last_llm_result = {}
         rule_message = ""
         example_sentence = ""
+        mistake_type = ""
         if context.detected_mistake_examples:
             p = context.detected_mistake_examples[0]
             rule_message = p.rule_message or ""
+            mistake_type = p.mistake_type or ""
             examples = p.examples
             example_sentence = (examples[0] if examples else "") or ""
 
         messages = [
             {"role": "system", "content": _SYSTEM_LESSON_INSTRUCTIONS},
-            {"role": "user", "content": _user_message(rule_message, example_sentence)},
+            {
+                "role": "user",
+                "content": _user_message(rule_message, example_sentence, mistake_type),
+            },
         ]
 
         try:

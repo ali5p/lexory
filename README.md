@@ -105,9 +105,12 @@ Once the system pipeline is stable, retrieval quality improvements are planned.
 
 # Known Issues / Tradeoffs
 
-### LearningSummaryBatch (Not Integrated Yet)
+### Batch jobs (not integrated in runtime yet)
 
-LearningSummaryBatch is currently unused. It is planned to be part of the context assembly and the lesson generation logic once the taxonomy is stabilized.
+- **LearningSummaryBatch** (`batch/learning_summaries.py`) — occurrence-driven rolling summaries.
+- **Lesson artifact analytics** — planned batch module for explanation effectiveness. Online `/submit` persists artifacts but does not read them.
+
+Both are intended to feed long-term context at generation time once metrics are stable.
 
 ---
 
@@ -195,7 +198,6 @@ flowchart TB
     J[Session candidates]
     K[Fallback: PostgreSQL scores then Qdrant by mistake_type]
     L[(mistake_examples)]
-    M[(lesson_artifact_points)]
     N[(learning_summary_embeddings)]
     O[(lesson_artifact_points — persist new lesson)]
 
@@ -212,14 +214,13 @@ flowchart TB
     E -- Yes --> G
 
     G --> H
-    M --> G
     N --> G
 
     H --> I
     I --> O
 ```
 
-*Query points*: from session candidates (from ingest), ranked by the user's clamped `user_scoring_events` score for the mistake types present in the current text; or **fallback** when there are no candidates: top `mistake_type` by clamped user score in PostgreSQL (`user_scoring_events`, tie-break: latest `occurred_at`), then the **latest** `mistake_examples` point for that type (Qdrant scroll ordered by payload `detected_at` desc). *Context*: selected mistakes + lesson artifacts retrieved by the `mistake_context` named vector + learning summaries. *Lessons*: Lexory generates one atomic lesson item per selected mistake and returns them grouped by `session_id`. Persisted lesson artifacts store structured SQL fields (`topic`, `explanation`, `exercises`) and Qdrant named vectors (`mistake_context`, `explanation`).
+*Query points*: from session candidates (from ingest), ranked by the user's clamped `user_scoring_events` score for the mistake types present in the current text; or **fallback** when there are no candidates: top `mistake_type` by clamped user score in PostgreSQL (`user_scoring_events`, tie-break: latest `occurred_at`), then the **latest** `mistake_examples` point for that type (Qdrant scroll ordered by payload `detected_at` desc). *Context for generation*: selected mistake + learning summaries only (prior lesson artifacts are persisted for batch analytics, not read online). *Response*: all detected mistakes with `selected_for_lesson`, plus one atomic `lesson_item` per selected mistake (each with `target` and `lesson`). Persisted lesson artifacts store structured SQL fields (`topic`, `explanation`, `exercises`) and Qdrant named vectors (`mistake_context`, `explanation`).
 
 ## Running with Docker
 
@@ -300,7 +301,10 @@ Fill out fields `text` and `user_id`, then click “Execute”.
 ### 3. Get the response
 <img src="docs/screenshots/swagger_ui/2.png" width="600"/>
 
-The LLM response is returned as a `lessons` array. Each item has its own `lesson_artifact_id` and a `lesson` object with `topic`, `explanation`, `exercises`, and `approach_type`.
+The LLM response separates **all detected mistakes** from **generated lesson items**:
+
+- `detected_mistakes`: every LanguageTool hit from the submission, each with `selected_for_lesson` (top mistakes by user score, max 3).
+- `lesson_items`: one atomic item per selected mistake. Each item has `lesson_artifact_id`, `target` (mistake metadata), and `lesson` (`topic`, `explanation`, `exercises`). Generation metadata such as `approach_type` is stored internally, not returned in the API.
 
 ---
 

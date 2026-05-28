@@ -9,9 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from core.models import (
     ContextAssembly,
     DetectedMistakeExample,
+    DetectedMistakeItem,
     ExerciseAttempt,
+    LessonContent,
     LessonItemResponse,
     LessonResponse,
+    LessonTarget,
+    SubmitResponse,
     UserText,
 )
 from rag.approaches.base import BaseApproach, StubApproachHandler
@@ -85,12 +89,13 @@ class RAGService:
 
     async def ingest_user_text(
         self, user_text: UserText
-    ) -> tuple[str, str, List[dict]]:
+    ) -> tuple[str, str, List[dict], List[dict]]:
         """
         Ingest user text, process through LanguageTool, deduplicate, store.
-        Returns: (user_text_id, session_id, session_candidate_points).
+        Returns: (user_text_id, session_id, session_candidate_points, detected_mistakes).
         session_candidate_points: point-like dicts intercepted after category check
         and before semantic dedup, for use in query embedding.
+        detected_mistakes: every LanguageTool event from this submission (for API).
         """
         session_id = str(uuid.uuid4())
         user_text_id = str(uuid.uuid4())
@@ -104,6 +109,7 @@ class RAGService:
         )
 
         session_candidate_points: List[dict] = []
+        detected_mistakes: List[dict] = []
 
         try:
             events = process_text(
@@ -122,6 +128,7 @@ class RAGService:
 
             async with self.session_factory() as session:
                 for event in events:
+                    detected_mistakes.append(self._event_to_detected_mistake(event))
                     example_point, occurrence_point = await self._ingest_mistake_event(
                         session=session,
                         event=event,
@@ -144,7 +151,7 @@ class RAGService:
                 "LanguageTool is unavailable. Check your internet connection or try again later."
             ) from None
 
-        return user_text_id, session_id, session_candidate_points
+        return user_text_id, session_id, session_candidate_points, detected_mistakes
 
     @staticmethod
     def _user_filter(user_id: str, extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -415,19 +422,20 @@ class RAGService:
             },
         )
 
-    async def submit_and_lesson(
-        self, text: str, user_id: str
-    ) -> tuple[Optional[str], str, List["LessonItemResponse"], "ContextAssembly"]:
-        """
-        Combined ingest + lesson generation. Single flow trigger.
-        Returns: (user_text_id, session_id, lesson_items, context)
-        """
+    async def submit_and_lesson(self, text: str, user_id: str) -> SubmitResponse:
+        """Combined ingest + lesson generation. Single flow trigger."""
         session_id: str
         user_text_id: Optional[str] = None
+        detected_mistakes_raw: List[dict] = []
 
         session_candidate_points: List[dict] = []
         if text and text.strip():
-            user_text_id, session_id, session_candidate_points = await self.ingest_user_text(
+            (
+                user_text_id,
+                session_id,
+                session_candidate_points,
+                detected_mistakes_raw,
+            ) = await self.ingest_user_text(
                 UserText(text=text.strip(), user_id=user_id)
             )
         else:
@@ -441,6 +449,11 @@ class RAGService:
         )
         query_points = self._unique_query_points_by_lesson_target(query_points)
         user_filter = {"user_id": user_id}
+        selected_mistake_ids = self._selected_mistake_ids(query_points)
+        detected_mistakes = self._build_detected_mistake_items(
+            detected_mistakes_raw,
+            selected_mistake_ids,
+        )
 
         if not query_points:
             async with self.session_factory() as s:
@@ -465,25 +478,24 @@ class RAGService:
                     "No usable session context. Please submit more text to generate a lesson."
                 )
                 title = "No usable session context"
-            no_context_lesson = LessonResponse(
+            no_context_lesson = LessonContent(
                 topic=title,
                 explanation=expl,
                 exercises=[],
-                approach_type="rule_based",
             )
-            empty_context = ContextAssembly(
-                detected_mistake_examples=[],
-                long_term_dynamics=[],
-                recently_used_explanations=[],
-            )
-            return (
-                user_text_id,
-                session_id,
-                [LessonItemResponse(lesson_artifact_id=None, lesson=no_context_lesson)],
-                empty_context,
+            return SubmitResponse(
+                user_text_id=user_text_id,
+                session_id=session_id,
+                detected_mistakes=detected_mistakes,
+                lesson_items=[
+                    LessonItemResponse(
+                        lesson_artifact_id=None,
+                        target=None,
+                        lesson=no_context_lesson,
+                    )
+                ],
             )
 
-        full_context = self._context_from_query_points(query_points, user_filter)
         lesson_items = await self._generate_atomic_lesson_items(
             query_points=query_points,
             user_id=user_id,
@@ -491,7 +503,12 @@ class RAGService:
             user_filter=user_filter,
         )
 
-        return user_text_id, session_id, lesson_items, full_context
+        return SubmitResponse(
+            user_text_id=user_text_id,
+            session_id=session_id,
+            detected_mistakes=detected_mistakes,
+            lesson_items=lesson_items,
+        )
 
 
     async def process_exercise_attempt(self, attempt: ExerciseAttempt) -> dict:
@@ -725,6 +742,52 @@ class RAGService:
             return rule_scores.get((mistake_type, rule_id), (0.0, ""))
         return type_scores.get(mistake_type, (0.0, ""))
 
+    @staticmethod
+    def _event_to_detected_mistake(event: dict) -> dict:
+        return {
+            "mistake_id": event["mistake_id"],
+            "rule_id": str(event.get("rule_id", "") or ""),
+            "mistake_type": event["mistake_type"],
+            "text": str(event.get("text", "") or ""),
+            "rule_message": str(event.get("rule_message", "") or ""),
+        }
+
+    @staticmethod
+    def _selected_mistake_ids(query_points: List[dict]) -> Set[str]:
+        selected: Set[str] = set()
+        for point in query_points:
+            mistake_id = str(point.get("payload", {}).get("mistake_id", "") or "")
+            if mistake_id:
+                selected.add(mistake_id)
+        return selected
+
+    @staticmethod
+    def _build_detected_mistake_items(
+        detected_mistakes: List[dict],
+        selected_mistake_ids: Set[str],
+    ) -> List[DetectedMistakeItem]:
+        return [
+            DetectedMistakeItem(
+                mistake_id=item["mistake_id"],
+                rule_id=item["rule_id"],
+                mistake_type=item["mistake_type"],
+                text=item["text"],
+                rule_message=item.get("rule_message", ""),
+                selected_for_lesson=item["mistake_id"] in selected_mistake_ids,
+            )
+            for item in detected_mistakes
+        ]
+
+    @staticmethod
+    def _payload_to_lesson_target(payload: dict) -> LessonTarget:
+        return LessonTarget(
+            mistake_id=str(payload.get("mistake_id", "") or ""),
+            rule_id=str(payload.get("rule_id", "") or ""),
+            mistake_type=str(payload.get("mistake_type", "") or ""),
+            text=str(payload.get("text", "") or ""),
+            rule_message=str(payload.get("rule_message", "") or ""),
+        )
+
     def _payload_to_detected_example(self, payload: dict) -> DetectedMistakeExample:
         """Format point payload for ContextAssembly detected_mistake_examples."""
         mistake_type = payload.get("mistake_type", "")
@@ -739,52 +802,24 @@ class RAGService:
             rule_message=str(payload.get("rule_message", "") or ""),
         )
 
-    def _context_from_query_points(
+    def _retrieve_staged_context(
         self,
-        query_points: List[dict],
+        query_embedding: List[float],
         user_filter: Dict[str, str],
+        primary_examples: List[dict],
     ) -> ContextAssembly:
-        primary_examples = [
-            point.get("payload", {}) for point in query_points if point.get("payload")
-        ]
         detected_mistake_examples = [
             self._payload_to_detected_example(payload)
             for payload in primary_examples
             if payload
         ]
-        recently_used_explanations: List[dict] = []
-        long_term_dynamics: List[dict] = []
-        seen_artifact_ids: Set[str] = set()
-        seen_summary_ids: Set[str] = set()
-
-        for point in query_points:
-            context_vec = point.get("vectors", {}).get("context")
-            payload = point.get("payload", {})
-            if not context_vec or len(context_vec) != 384:
-                continue
-
-            for artifact in self._retrieve_lesson_artifacts(
-                list(context_vec), user_filter, target_payload=payload
-            ):
-                artifact_id = str(artifact.get("artifact_id", "") or "")
-                if artifact_id and artifact_id not in seen_artifact_ids:
-                    seen_artifact_ids.add(artifact_id)
-                    recently_used_explanations.append(artifact)
-
-            for summary in self._retrieve_learning_summaries(
-                list(context_vec), user_filter
-            ):
-                summary_id = str(summary.get("id", "") or summary.get("content", ""))
-                if summary_id and summary_id not in seen_summary_ids:
-                    seen_summary_ids.add(summary_id)
-                    long_term_dynamics.append(summary)
+        long_term_dynamics = self._retrieve_learning_summaries(
+            query_embedding, user_filter
+        )
 
         return ContextAssembly(
             detected_mistake_examples=detected_mistake_examples,
-            recently_used_explanations=recently_used_explanations[
-                : self.max_context_items
-            ],
-            long_term_dynamics=long_term_dynamics[: self.max_context_items],
+            long_term_dynamics=long_term_dynamics,
         )
 
     async def _generate_atomic_lesson_items(
@@ -823,36 +858,15 @@ class RAGService:
             items.append(
                 LessonItemResponse(
                     lesson_artifact_id=artifact_id,
-                    lesson=lesson,
+                    target=self._payload_to_lesson_target(payload),
+                    lesson=LessonContent(
+                        topic=lesson.topic,
+                        explanation=lesson.explanation,
+                        exercises=lesson.exercises,
+                    ),
                 )
             )
         return items
-
-    def _retrieve_staged_context(
-        self,
-        query_embedding: List[float],
-        user_filter: Dict[str, str],
-        primary_examples: List[dict],
-    ) -> ContextAssembly:
-        detected_mistake_examples = [
-            self._payload_to_detected_example(payload)
-            for payload in primary_examples
-            if payload
-        ]
-        recently_used_explanations = self._retrieve_lesson_artifacts(
-            query_embedding,
-            user_filter,
-            target_payload=primary_examples[0] if primary_examples else None,
-        )
-        long_term_dynamics = self._retrieve_learning_summaries(
-            query_embedding, user_filter
-        )
-
-        return ContextAssembly(
-            detected_mistake_examples=detected_mistake_examples,
-            recently_used_explanations=recently_used_explanations,
-            long_term_dynamics=long_term_dynamics,
-        )
 
     @staticmethod
     def _mistake_type_to_description(mistake_type: str) -> str:
@@ -873,6 +887,10 @@ class RAGService:
         target_payload: Optional[dict] = None,
         limit: int = 1,
     ) -> List[dict]:
+        """
+        Retrieve prior lesson artifacts by mistake_context similarity.
+        Reserved for batch analytics; online /submit no longer reads artifacts.
+        """
         user_id = user_filter.get("user_id")
         if not user_id:
             return []
@@ -1037,23 +1055,16 @@ class RAGService:
 
     def _construct_lesson(
         self, context: ContextAssembly) -> LessonResponse:
-        used_approach_types = {
-            artifact.get("approach_type", "")
-            for artifact in context.recently_used_explanations
-            if artifact.get("approach_type")
-        }
-
         primary_mistake_context: Optional[DetectedMistakeExample] = (
             context.detected_mistake_examples[0] if context.detected_mistake_examples else None
         )
 
-        # TODO: add long term dynamics
         primary_summary = (
             context.long_term_dynamics[0] if context.long_term_dynamics else None
         )
 
         topic = self._extract_topic(primary_mistake_context, primary_summary)
-        approach_type = self._select_approach_type(used_approach_types)
+        approach_type = self._select_approach_type()
         handler = self._get_approach_handler(approach_type)
         explanation = handler.build_explanation(context, topic)
         exercises = handler.generate_exercises(primary_mistake_context)
@@ -1090,20 +1101,8 @@ class RAGService:
 
         return "General Language Learning"
 
-    def _select_approach_type(self, used_approach_types: Set[str]) -> str:
-        available_types = [
-            "rule_based",
-            "example_based",
-            "interactive",
-            "visual",
-            "contextual",
-        ]
-
-        for approach in available_types:
-            if approach not in used_approach_types:
-                return approach
-
-        return available_types[0]
+    def _select_approach_type(self) -> str:
+        return "rule_based"
 
     def _get_approach_handler(self, approach_type: str) -> BaseApproach:
         mode = os.environ.get("GENERATOR_MODE", "llm").lower()

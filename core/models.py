@@ -68,28 +68,57 @@ class DetectedMistakeExample(BaseModel):
 
 
 class ContextAssembly(BaseModel):
+    """Internal context for lesson generation (not exposed on /submit)."""
+
     detected_mistake_examples: List[DetectedMistakeExample]
     long_term_dynamics: List[Dict]
-    recently_used_explanations: List[Dict]
 
 
 class LessonResponse(BaseModel):
+    """Internal lesson result including generation metadata."""
+
     topic: str
     explanation: str
     exercises: list[str]
     approach_type: str
 
 
+class LessonContent(BaseModel):
+    """User-facing lesson payload (no generation metadata)."""
+
+    topic: str
+    explanation: str
+    exercises: list[str]
+
+
+class LessonTarget(BaseModel):
+    mistake_id: str
+    rule_id: str
+    mistake_type: str
+    text: str
+    rule_message: str = ""
+
+
+class DetectedMistakeItem(BaseModel):
+    mistake_id: str
+    rule_id: str
+    mistake_type: str
+    text: str
+    rule_message: str = ""
+    selected_for_lesson: bool
+
+
 class LessonItemResponse(BaseModel):
     lesson_artifact_id: Optional[str] = None
-    lesson: LessonResponse
+    target: Optional[LessonTarget] = None
+    lesson: LessonContent
 
 
 class SubmitResponse(BaseModel):
     user_text_id: Optional[str] = None
     session_id: str
-    lessons: List[LessonItemResponse]
-    context: "ContextAssembly"
+    detected_mistakes: List[DetectedMistakeItem]
+    lesson_items: List[LessonItemResponse]
 
 
 class QueryResponse(BaseModel):
