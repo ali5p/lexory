@@ -34,7 +34,8 @@ class LessonArtifact(BaseModel):
     topic: str = ""
     explanation: str = ""
     exercises: List[str] = Field(default_factory=list)
-    mistake_types_covered: List[str]
+    approach_type: str = ""
+    mistake_type: str = ""
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -71,7 +72,13 @@ class ContextAssembly(BaseModel):
     """Internal context for lesson generation (not exposed on /submit)."""
 
     detected_mistake_examples: List[DetectedMistakeExample]
-    long_term_dynamics: List[Dict]
+    long_term_dynamics: List[Dict] = Field(
+        default_factory=list,
+        description=(
+            "Batch learning summaries retrieved at request time; reserved for "
+            "approach switching and future user-facing stats, not LLM prompts."
+        ),
+    )
 
 
 class LessonResponse(BaseModel):

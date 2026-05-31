@@ -220,7 +220,7 @@ flowchart TB
     I --> O
 ```
 
-*Query points*: from session candidates (from ingest), ranked by the user's clamped `user_scoring_events` score for the mistake types present in the current text; or **fallback** when there are no candidates: top `mistake_type` by clamped user score in PostgreSQL (`user_scoring_events`, tie-break: latest `occurred_at`), then the **latest** `mistake_examples` point for that type (Qdrant scroll ordered by payload `detected_at` desc). *Context for generation*: selected mistake + learning summaries only (prior lesson artifacts are persisted for batch analytics, not read online). *Response*: all detected mistakes with `selected_for_lesson`, plus one atomic `lesson_item` per selected mistake (each with `target` and `lesson`). Persisted lesson artifacts store structured SQL fields (`topic`, `explanation`, `exercises`) and Qdrant named vectors (`mistake_context`, `explanation`).
+*Query points*: from session candidates (from ingest), ranked by the user's clamped `user_scoring_events` score for the mistake types present in the current text; or **fallback** when there are no candidates: top `mistake_type` by clamped user score in PostgreSQL (`user_scoring_events`, tie-break: latest `occurred_at`), then the **latest** `mistake_examples` point for that type (Qdrant scroll ordered by payload `detected_at` desc). *Context for generation*: selected mistake only (`mistake_type`, user sentence, `rule_message` → LLM). *Response*: all detected mistakes with `selected_for_lesson`, plus one atomic `lesson_item` per selected mistake (each with `target` and `lesson`).
 
 ## Running with Docker
 

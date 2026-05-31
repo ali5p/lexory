@@ -472,7 +472,7 @@ class LearningSummaryBatch:
         self, user_id: str, lesson_artifacts: pl.DataFrame, window_start, window_end
     ) -> int:
       
-        # Count total lesson exposures (mistake_types covered) for global summaries.
+        # Count lesson rows in the window (one atomic lesson per mistake_type).
         if lesson_artifacts.is_empty():
             return 0
         df = lesson_artifacts.filter(
@@ -482,10 +482,7 @@ class LearningSummaryBatch:
         )
         if df.is_empty():
             return 0
-
-        if "mistake_types_covered" in df.columns:
-            exposures = df.select(pl.col("mistake_types_covered").list.lengths().sum()).item()
-        return int(exposures or 0)
+        return int(df.height)
 
     def _exposure_count_mistake_type(
         self,
@@ -499,20 +496,12 @@ class LearningSummaryBatch:
         # Count lesson exposures for a specific mistake_type.
         if lesson_artifacts.is_empty():
             return 0
-        if "mistake_types_covered" in lesson_artifacts.columns:
-            df = lesson_artifacts.filter(
-                (pl.col("user_id") == user_id)
-                & (pl.col("date") >= pl.lit(window_start))
-                & (pl.col("date") <= pl.lit(window_end))
-                & pl.col("mistake_types_covered").list.contains(mistake_type)
-            )
-        else:
-            df = lesson_artifacts.filter(
-                (pl.col("user_id") == user_id)
-                & (pl.col("date") >= pl.lit(window_start))
-                & (pl.col("date") <= pl.lit(window_end))
-                & pl.col("mistake_types_covered").list.contains(mistake_type)
-            )
+        df = lesson_artifacts.filter(
+            (pl.col("user_id") == user_id)
+            & (pl.col("date") >= pl.lit(window_start))
+            & (pl.col("date") <= pl.lit(window_end))
+            & (pl.col("mistake_type") == mistake_type)
+        )
         return int(df.height)
 
     @staticmethod
@@ -528,7 +517,7 @@ class LearningSummaryBatch:
             "scope": summary.scope,
             "scope_key": summary.scope_key or "",
             "computed_at": summary.computed_at.isoformat(),
-            "content": summary.summary_text,  # For ContextAssembly long_term_dynamics
+            "content": summary.summary_text,  # Retrieved into ContextAssembly.long_term_dynamics
         }
         self.qdrant.upsert(
             collection_name="learning_summary_embeddings",

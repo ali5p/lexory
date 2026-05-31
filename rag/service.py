@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from core.lesson_artifact import LessonArtifactRecord
 from core.models import (
     ContextAssembly,
     DetectedMistakeExample,
@@ -534,7 +535,9 @@ class RAGService:
                 )
                 if art is None:
                     _missing_artifacts.error("Lesson artifact with targeted mistake_type is missing")
-                targets: Set[str] = set(art.mistake_types_covered or []) if art else set()
+                targets: Set[str] = (
+                    {art.mistake_type} if art and art.mistake_type else set()
+                )
                 detected: Set[str] = (
                     {e.get("mistake_type", "") for e in events} if events else set()
                 )
@@ -889,7 +892,7 @@ class RAGService:
     ) -> List[dict]:
         """
         Retrieve prior lesson artifacts by mistake_context similarity.
-        Reserved for batch analytics; online /submit no longer reads artifacts.
+        Reserved for batch analytics.
         """
         user_id = user_filter.get("user_id")
         if not user_id:
@@ -959,6 +962,7 @@ class RAGService:
         """
         Retrieve relevant LearningSummaries for ContextAssembly long_term_dynamics.
         Uses learning_summary_embeddings (batch-generated summaries).
+        Consumed for approach switching / stats, not LLM lesson prompts.
         """
         user_id = user_filter.get("user_id")
         if not user_id:
@@ -998,35 +1002,22 @@ class RAGService:
     ) -> str:
         artifact_id = str(uuid.uuid4())
         created_at = datetime.now(timezone.utc)
-
-        mistake_types_covered = [
-            p.mistake_type
-            for p in context.detected_mistake_examples
-            if p.mistake_type
-        ]
         primary_mistake = (
             context.detected_mistake_examples[0]
             if context.detected_mistake_examples
             else None
         )
-
-        artifact_payload = {
-            "artifact_id": artifact_id,
-            "user_id": user_id,
-            "session_id": session_id or "",
-            "mistake_id": primary_mistake.mistake_id if primary_mistake else None,
-            "rule_id": primary_mistake.rule_id if primary_mistake else "",
-            "mistake_type": primary_mistake.mistake_type if primary_mistake else "",
-            "topic": lesson.topic,
-            "explanation": lesson.explanation,
-            "exercises": lesson.exercises,
-            "approach_type": lesson.approach_type,
-            "mistake_types_covered": mistake_types_covered,
-            "created_at": created_at.isoformat(),
-        }
+        record = LessonArtifactRecord.for_lesson(
+            artifact_id=artifact_id,
+            lesson=lesson,
+            user_id=user_id,
+            session_id=session_id,
+            primary_mistake=primary_mistake,
+            created_at=created_at,
+        )
 
         async with self.session_factory() as session:
-            await repo.upsert_artifact(session, artifact_payload)
+            await repo.upsert_artifact(session, record.sql_row())
             await session.commit()
 
         explanation_text = self._artifact_embedding_text(lesson)
@@ -1040,7 +1031,7 @@ class RAGService:
                         "mistake_context": query_embedding,
                         "explanation": explanation_vector,
                     },
-                    "payload": artifact_payload,
+                    "payload": record.qdrant_payload(),
                 }
             ],
         )
@@ -1059,11 +1050,7 @@ class RAGService:
             context.detected_mistake_examples[0] if context.detected_mistake_examples else None
         )
 
-        primary_summary = (
-            context.long_term_dynamics[0] if context.long_term_dynamics else None
-        )
-
-        topic = self._extract_topic(primary_mistake_context, primary_summary)
+        topic = self._extract_topic(primary_mistake_context)
         approach_type = self._select_approach_type()
         handler = self._get_approach_handler(approach_type)
         explanation = handler.build_explanation(context, topic)
@@ -1087,17 +1074,11 @@ class RAGService:
     def _extract_topic(
         self,
         primary_mistake_context: Optional[DetectedMistakeExample],
-        primary_summary: Optional[dict],
     ) -> str:
         if primary_mistake_context:
             desc = primary_mistake_context.description
             if desc:
                 return desc.split(".")[0].strip()[:100]
-
-        if primary_summary:
-            content = primary_summary.get("content", "")
-            if content:
-                return content.split(".")[0].strip()[:100]
 
         return "General Language Learning"
 

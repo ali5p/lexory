@@ -218,10 +218,6 @@ class RuleBasedApproach(BaseApproach):
                 parts.append(f"LanguageTool: {rule_message}")
             elif mistake_type_desc:
                 parts.append(f"Mistake Type: {mistake_type_desc}")
-        if context.long_term_dynamics:
-            summary_content = context.long_term_dynamics[0].get("content", "")
-            if summary_content:
-                parts.append(f"Context: {summary_content[:200]}")
         if not parts:
             parts.append(f"Topic: {topic}")
         return " ".join(parts)[:500]
