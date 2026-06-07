@@ -880,79 +880,6 @@ class RAGService:
     
         return mistake_type.replace("_", " ").replace(".", " ").title()
 
-
-    # Lesson Artifacts
-
-    def _retrieve_lesson_artifacts(
-        self,
-        query_embedding: List[float],
-        user_filter: Dict[str, str],
-        target_payload: Optional[dict] = None,
-        limit: int = 1,
-    ) -> List[dict]:
-        """
-        Retrieve prior lesson artifacts by mistake_context similarity.
-        Reserved for batch analytics.
-        """
-        user_id = user_filter.get("user_id")
-        if not user_id:
-            return []
-        filters = self._lesson_artifact_filters(user_id, target_payload)
-        results = self.qdrant.search(
-            collection_name="lesson_artifact_points",
-            vector=None,
-            limit=max(limit, 5),
-            filters=filters,
-            named_query={
-                "vector_name": "mistake_context",
-                "vector": query_embedding,
-            },
-        )
-
-        artifacts = []
-        seen_artifact_ids: Set[str] = set()
-
-        for result in results:
-            if result["score"] < self.min_similarity_score:
-                continue
-
-            payload = result.get("payload", {})
-            artifact_id = payload.get("artifact_id", result["id"])
-
-            if artifact_id in seen_artifact_ids:
-                continue
-
-            seen_artifact_ids.add(artifact_id)
-            explanation = payload.get("explanation", payload.get("content", ""))
-            artifacts.append(
-                {
-                    "artifact_id": artifact_id,
-                    "explanation": explanation,
-                    "approach_type": payload.get("approach_type", ""),
-                    "similarity_score": result["score"],
-                }
-            )
-
-            if len(artifacts) >= limit:
-                break
-
-        return artifacts
-
-    def _lesson_artifact_filters(
-        self,
-        user_id: str,
-        target_payload: Optional[dict],
-    ) -> Dict[str, Any]:
-        extra: Dict[str, Any] = {}
-        if target_payload:
-            mistake_type = str(target_payload.get("mistake_type", "") or "")
-            rule_id = str(target_payload.get("rule_id", "") or "")
-            if mistake_type:
-                extra["mistake_type"] = mistake_type
-            if mistake_type == "unmapped" and rule_id:
-                extra["rule_id"] = rule_id
-        return self._user_filter(user_id, extra)
-
     def _retrieve_learning_summaries(
         self,
         query_embedding: List[float],
@@ -962,7 +889,7 @@ class RAGService:
         """
         Retrieve relevant LearningSummaries for ContextAssembly long_term_dynamics.
         Uses learning_summary_embeddings (batch-generated summaries).
-        Consumed for approach switching / stats, not LLM lesson prompts.
+        Consumed for approach switching / stats.
         """
         user_id = user_filter.get("user_id")
         if not user_id:
