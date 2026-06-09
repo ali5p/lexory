@@ -108,18 +108,15 @@ def _parse_lesson_json(response_text: str) -> Optional[dict]:
 
 
 class RuleBasedApproach(BaseApproach):
-    """LLM path uses chat API + optional JSON schema; rule path uses LT strings only."""
+    """Generate a lesson via the LLM chat API (JSON-schema constrained). On any
+    failure, return an error lesson (approach_type='llm_error') so the API
+    response stays structurally valid."""
 
-    def __init__(self, llm: Optional["BaseLLM"] = None):
+    def __init__(self, llm: "BaseLLM"):
         self.llm = llm
         self._last_llm_result: dict = {}
 
     def build_explanation(self, context: ContextAssembly, topic: str) -> str:
-        if self.llm is not None:
-            return self._build_explanation_llm(context, topic)
-        return self._build_explanation_rule_based(context, topic)
-
-    def _build_explanation_llm(self, context: ContextAssembly, topic: str) -> str:
         self._last_llm_result = {}
         rule_message = ""
         example_sentence = ""
@@ -207,39 +204,5 @@ class RuleBasedApproach(BaseApproach):
         }
         return self._last_llm_result["explanation"]
 
-    def _build_explanation_rule_based(self, context: ContextAssembly, topic: str) -> str:
-        self._last_llm_result = {}
-        parts: List[str] = []
-        if context.detected_mistake_examples:
-            p = context.detected_mistake_examples[0]
-            mistake_type_desc = p.description
-            rule_message = p.rule_message
-            if rule_message:
-                parts.append(f"LanguageTool: {rule_message}")
-            elif mistake_type_desc:
-                parts.append(f"Mistake Type: {mistake_type_desc}")
-        if not parts:
-            parts.append(f"Topic: {topic}")
-        return " ".join(parts)[:500]
-
-    def generate_exercises(self, primary_mistake_context: Optional[Any]) -> List[str]:
-        if self.llm and self._last_llm_result:
-            return self._last_llm_result.get("exercises", [])
-        exercises: List[str] = []
-        if primary_mistake_context:
-            examples = (
-                primary_mistake_context.examples
-                if hasattr(primary_mistake_context, "examples")
-                else (
-                    primary_mistake_context.get("examples", [])
-                    if isinstance(primary_mistake_context, dict)
-                    else []
-                )
-            )
-            if examples:
-                for example in examples[:2]:
-                    exercises.append(f"Practice: {example}")
-        if not exercises:
-            exercises.append("Complete the sentence with the correct form.")
-            exercises.append("Identify and correct the mistake in the given text.")
-        return exercises[:3]
+    def generate_exercises(self, primary_mistake_context: Optional[Any] = None) -> List[str]:
+        return self._last_llm_result.get("exercises", [])

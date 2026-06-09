@@ -1,5 +1,4 @@
 import logging
-import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
@@ -74,17 +73,13 @@ class RAGService:
         self.max_primary_mistakes = 3
         self.min_similarity_score = 0.5
         self.semantic_dedup_threshold = 0.9
-        _llm = None
-        if os.environ.get("GENERATOR_MODE", "llm").lower() == "llm":
-            try:
-                from llm.ollama_adapter import OllamaAdapter
-                _llm = OllamaAdapter()
-            except ImportError:
-                pass
+        from llm.ollama_adapter import OllamaAdapter
+
+        llm = OllamaAdapter()
         self._approach_registry: Dict[str, BaseApproach] = {
-            "rule_based": RuleBasedApproach(llm=_llm),
-            "example_based": ExampleBasedApproach(),
-            "default": DefaultApproach(),
+            "rule_based": RuleBasedApproach(llm=llm),
+            "example_based": ExampleBasedApproach(llm=llm),
+            "default": DefaultApproach(llm=llm),
         }
         self.lt_tool = create_language_tool()
 

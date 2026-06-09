@@ -7,7 +7,6 @@ services:
       - .:/app
       - /app/.venv  # preserve venv from build (host mount would overwrite)
     environment:
-      GENERATOR_MODE: ${GENERATOR_MODE:-llm}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:1.5b-instruct}
       HF_TOKEN: ${HF_TOKEN:-}
       # Use service hostnames here — not localhost. A host .env with
