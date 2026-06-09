@@ -251,7 +251,7 @@ After the first start, pull a model:
 docker compose exec ollama ollama pull qwen2.5:1.5b-instruct
 ```
 
-Set `GENERATOR_MODE=stub` to use deterministic stub lessons instead of the LLM.
+Set `GENERATOR_MODE` to any value other than `llm` to use the deterministic rule-based generator instead of the LLM.
 
 **Troubleshooting:** If the LLM fails with connection errors, pull the model and check the **ollama** logs. If Lexory cannot reach Qdrant on startup, use the bundled `docker-compose.yml` as-is (service URLs are fixed there). For **uvicorn on the host** with backends in Docker, use `.env` / `.env.example` with `http://localhost:…` on the published ports.
 
@@ -261,7 +261,7 @@ With **`docker compose`**, the **lexory** service receives **`QDRANT_URL`**, **`
 
 | Variable | Lexory-in-Docker | Description |
 |----------|------------------|-------------|
-| `GENERATOR_MODE` | From `.env` / default `llm` | `llm` or `stub` |
+| `GENERATOR_MODE` | From `.env` / default `llm` | `llm` (use the LLM); any other value uses the deterministic rule-based generator |
 | `OLLAMA_MODEL` | From `.env` / default `qwen2.5:1.5b-instruct` | Ollama model name |
 | `OLLAMA_URL` | Fixed in `docker-compose.yml` | `http://ollama:11434/api/generate` (Lexory calls **`/api/chat`** for lessons; the host/port are taken from this URL) |
 | `OLLAMA_STRUCTURED_OUTPUT` | From `.env` / default `1` | Set `0` if your Ollama build rejects JSON-schema **`format`** on chat |

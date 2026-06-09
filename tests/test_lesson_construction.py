@@ -38,11 +38,14 @@ def rag_service(mock_qdrant, mock_embedder, mock_session_factory):
     return RAGService(mock_qdrant, mock_embedder, mock_session_factory)
 
 
-def test_construct_lesson_stub_returns_valid_structure(
-    rag_service: RAGService, monkeypatch: pytest.MonkeyPatch
+def test_construct_lesson_rule_based_returns_valid_structure(
+    rag_service: RAGService,
 ) -> None:
-    """Validate structural contract of lesson construction with stub handler."""
-    monkeypatch.setenv("GENERATOR_MODE", "stub")
+    """Validate structural contract of lesson construction via the deterministic
+    (non-LLM) rule-based path, independent of GENERATOR_MODE / network."""
+    # Force the deterministic generator regardless of construction-time environment.
+    for handler in rag_service._approach_registry.values():
+        handler.llm = None
 
     context = ContextAssembly(
         detected_mistake_examples=[
@@ -54,7 +57,7 @@ def test_construct_lesson_stub_returns_valid_structure(
     lesson = rag_service._construct_lesson(context)
 
     assert lesson.topic is not None
-    assert lesson.explanation.startswith("[STUB]")
+    assert isinstance(lesson.explanation, str) and lesson.explanation
     assert isinstance(lesson.exercises, list)
 
     # Empty context must not crash (structural contract)

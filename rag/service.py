@@ -19,7 +19,7 @@ from core.models import (
     SubmitResponse,
     UserText,
 )
-from rag.approaches.base import BaseApproach, StubApproachHandler
+from rag.approaches.base import BaseApproach
 from rag.approaches.default import DefaultApproach
 from rag.approaches.example_based import ExampleBasedApproach
 from rag.approaches.rule_based import RuleBasedApproach
@@ -1013,11 +1013,6 @@ class RAGService:
         return "rule_based"
 
     def _get_approach_handler(self, approach_type: str) -> BaseApproach:
-        mode = os.environ.get("GENERATOR_MODE", "llm").lower()
-
-        if mode == "stub":
-            return StubApproachHandler()
-            
         return self._approach_registry.get(
             approach_type, self._approach_registry["default"]
         )
