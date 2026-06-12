@@ -148,7 +148,7 @@ def test_process_text_bracketed_rule_id_maps_via_normalize(mock_embedder):
         lt_tool=mock_lt,
     )
     assert len(events) == 1
-    assert events[0]["mistake_type"] == "unmapped"
+    assert events[0]["mistake_type"] == "typos"
     assert events[0]["rule_id"] == "TOT_HE[1]"
 
 

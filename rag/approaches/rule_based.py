@@ -31,7 +31,7 @@ LESSON_RESPONSE_JSON_SCHEMA: dict = {
     "required": ["topic", "lesson", "exercise"],
 }
 
-_SYSTEM_LESSON_INSTRUCTIONS = """You are an English teacher. Your task is to produce ONE short grammar lesson as structured JSON only.
+_SYSTEM_LESSON_INSTRUCTIONS = """You are an English teacher who teaches deductively: state the grammar rule first, then show a short example. Produce ONE short grammar lesson as structured JSON only.
 
 The user message will contain:
 - A mistake category (Lexory taxonomy label).
@@ -41,9 +41,9 @@ The user message will contain:
 Steps:
 1. Identify the mistake using the category, rule message, and the sentence.
 2. Choose a clear grammar topic name.
-3. Write a concise lesson (plain language).
+3. In the lesson, state the rule in plain language FIRST, then give one short correct example.
 4. Write one short exercise (similar style to the user's sentence).
-5. If the rule message is vague, infer the topic mainly from the sentence.
+5. If the rule message is vague, infer the rule mainly from the sentence.
 
 Respond with JSON only (no markdown, no preamble). Use exactly these keys: topic, lesson, exercise.
 
@@ -108,32 +108,43 @@ def _parse_lesson_json(response_text: str) -> Optional[dict]:
 
 
 class RuleBasedApproach(BaseApproach):
-    """Generate a lesson via the LLM chat API (JSON-schema constrained). On any
-    failure, return an error lesson (approach_type='llm_error') so the API
-    response stays structurally valid."""
+    """Deductive lesson generation via the LLM chat API (JSON-schema constrained):
+    state the rule first, then a short example. On any failure, returns an error
+    lesson (``generation_status='error'``) so the API response stays valid.
+
+    Subclasses change the teaching style by overriding ``SYSTEM_PROMPT`` and the
+    user message; the LLM call, parsing, and error handling are shared.
+    """
+
+    SYSTEM_PROMPT = _SYSTEM_LESSON_INSTRUCTIONS
 
     def __init__(self, llm: "BaseLLM"):
         self.llm = llm
         self._last_llm_result: dict = {}
 
-    def build_explanation(self, context: ContextAssembly, topic: str) -> str:
-        self._last_llm_result = {}
-        rule_message = ""
-        example_sentence = ""
-        mistake_type = ""
+    @staticmethod
+    def _primary_fields(context: ContextAssembly) -> tuple[str, str, str]:
+        """(rule_message, example_sentence, mistake_type) of the primary mistake."""
+        rule_message = example_sentence = mistake_type = ""
         if context.detected_mistake_examples:
             p = context.detected_mistake_examples[0]
             rule_message = p.rule_message or ""
             mistake_type = p.mistake_type or ""
             examples = p.examples
             example_sentence = (examples[0] if examples else "") or ""
+        return rule_message, example_sentence, mistake_type
 
+    def build_explanation(self, context: ContextAssembly, topic: str) -> str:
+        rule_message, example_sentence, mistake_type = self._primary_fields(context)
+        user_message = _user_message(rule_message, example_sentence, mistake_type)
+        return self._generate(self.SYSTEM_PROMPT, user_message, topic)
+
+    def _generate(self, system_prompt: str, user_message: str, topic: str) -> str:
+        """Shared LLM call + JSON parse + error handling. Populates _last_llm_result."""
+        self._last_llm_result = {}
         messages = [
-            {"role": "system", "content": _SYSTEM_LESSON_INSTRUCTIONS},
-            {
-                "role": "user",
-                "content": _user_message(rule_message, example_sentence, mistake_type),
-            },
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
         ]
 
         try:
@@ -143,56 +154,21 @@ class RuleBasedApproach(BaseApproach):
                 json_schema=LESSON_RESPONSE_JSON_SCHEMA,
             )
         except requests.RequestException as e:
-            err_msg = f"LLM generation failed: {e!s}"
-            self._last_llm_result = {
-                "topic": "error",
-                "explanation": err_msg,
-                "exercises": [],
-                "approach_type": "llm_error",
-            }
-            return err_msg
+            return self._fail(f"LLM generation failed: {e!s}")
         except (KeyError, ValueError, TypeError) as e:
-            err_msg = f"LLM generation failed: invalid response ({e!s})"
-            self._last_llm_result = {
-                "topic": "error",
-                "explanation": err_msg,
-                "exercises": [],
-                "approach_type": "llm_error",
-            }
-            return err_msg
+            return self._fail(f"LLM generation failed: invalid response ({e!s})")
         except Exception as e:
             _log.exception("LLM generation failed")
-            err_msg = f"LLM generation failed: {e!s}"
-            self._last_llm_result = {
-                "topic": "error",
-                "explanation": err_msg,
-                "exercises": [],
-                "approach_type": "llm_error",
-            }
-            return err_msg
+            return self._fail(f"LLM generation failed: {e!s}")
 
         parsed = _parse_lesson_json(response_text)
         if not parsed:
-            err_msg = "LLM generation failed: invalid JSON response"
-            self._last_llm_result = {
-                "topic": "error",
-                "explanation": err_msg,
-                "exercises": [],
-                "approach_type": "llm_error",
-            }
-            return err_msg
+            return self._fail("LLM generation failed: invalid JSON response")
 
         required_keys = ("topic", "lesson", "exercise")
         if not all(k in parsed for k in required_keys):
             missing = [k for k in required_keys if k not in parsed]
-            err_msg = f"LLM generation failed: missing keys {missing}"
-            self._last_llm_result = {
-                "topic": "error",
-                "explanation": err_msg,
-                "exercises": [],
-                "approach_type": "llm_error",
-            }
-            return err_msg
+            return self._fail(f"LLM generation failed: missing keys {missing}")
 
         self._last_llm_result = {
             "topic": str(parsed.get("topic", "")).strip() or topic,
@@ -200,9 +176,18 @@ class RuleBasedApproach(BaseApproach):
             "exercises": [str(parsed.get("exercise", "")).strip()]
             if parsed.get("exercise")
             else [],
-            "approach_type": "llm",
+            "generation_status": "ok",
         }
         return self._last_llm_result["explanation"]
+
+    def _fail(self, err_msg: str) -> str:
+        self._last_llm_result = {
+            "topic": "error",
+            "explanation": err_msg,
+            "exercises": [],
+            "generation_status": "error",
+        }
+        return err_msg
 
     def generate_exercises(self, primary_mistake_context: Optional[Any] = None) -> List[str]:
         return self._last_llm_result.get("exercises", [])

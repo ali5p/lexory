@@ -79,6 +79,14 @@ class ContextAssembly(BaseModel):
             "approach switching and future user-facing stats, not LLM prompts."
         ),
     )
+    similar_past_examples: List[Dict] = Field(
+        default_factory=list,
+        description=(
+            "User's own prior sentences with the same mistake_type (text + "
+            "rule_message), by sentence similarity. Fuel for the inductive "
+            "(example_based) approach; ignored by deductive approaches."
+        ),
+    )
 
 
 class LessonResponse(BaseModel):

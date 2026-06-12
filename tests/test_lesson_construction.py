@@ -63,18 +63,45 @@ def test_construct_lesson_returns_valid_structure(rag_service: RAGService) -> No
         long_term_dynamics=[],
     )
 
-    lesson = rag_service._construct_lesson(context)
+    lesson = rag_service._construct_lesson(context, "rule_based")
 
     assert lesson.topic == "Subject-verb agreement"
     assert lesson.explanation
     assert lesson.exercises == ["Correct: She walk to school."]
-    assert lesson.approach_type == "llm"
+    # Stored approach_type is the selected teaching approach, not generation status.
+    assert lesson.approach_type == "rule_based"
 
     # Empty context must not crash (structural contract)
     empty_context = ContextAssembly(
         detected_mistake_examples=[],
         long_term_dynamics=[],
     )
-    empty_lesson = rag_service._construct_lesson(empty_context)
+    empty_lesson = rag_service._construct_lesson(empty_context, "rule_based")
     assert empty_lesson.topic is not None
     assert isinstance(empty_lesson.exercises, list)
+
+
+def test_construct_lesson_example_based_records_selected_approach(
+    rag_service: RAGService,
+) -> None:
+    """example_based runs through the shared LLM path and stores its own approach_type."""
+    context = ContextAssembly(
+        detected_mistake_examples=[
+            DetectedMistakeExample(
+                mistake_type="SUBJECT_VERB_AGREEMENT",
+                examples=["My brother live in Berlin."],
+                rule_message="Singular subject needs -s.",
+            )
+        ],
+        long_term_dynamics=[],
+        similar_past_examples=[
+            {"text": "He walk to school.", "rule_message": "x"},
+            {"text": "She play tennis.", "rule_message": "y"},
+        ],
+    )
+
+    lesson = rag_service._construct_lesson(context, "example_based")
+
+    assert lesson.approach_type == "example_based"
+    assert lesson.explanation
+    assert isinstance(lesson.exercises, list)

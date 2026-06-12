@@ -18,6 +18,7 @@ from core.models import (
     SubmitResponse,
     UserText,
 )
+from rag.approach_selection import ApproachSelector
 from rag.approaches.base import BaseApproach
 from rag.approaches.default import DefaultApproach
 from rag.approaches.example_based import ExampleBasedApproach
@@ -81,6 +82,10 @@ class RAGService:
             "example_based": ExampleBasedApproach(llm=llm),
             "default": DefaultApproach(llm=llm),
         }
+        self.selector = ApproachSelector(
+            approaches=["rule_based", "example_based"],
+            baseline="rule_based",
+        )
         self.lt_tool = create_language_tool()
 
     async def ingest_user_text(
@@ -800,6 +805,52 @@ class RAGService:
             rule_message=str(payload.get("rule_message", "") or ""),
         )
 
+    def _retrieve_similar_examples(
+        self,
+        query_embedding: List[float],
+        user_id: str,
+        mistake_type: str,
+        exclude_mistake_id: Optional[str] = None,
+        limit: int = 3,
+    ) -> List[dict]:
+        """The user's own prior sentences with the same mistake_type, ranked by
+        sentence (context) similarity. Personalized fuel for the inductive
+        (example_based) approach. Small over-fetch to survive the score threshold,
+        the current-mistake exclusion, and text dedup.
+        """
+        if not user_id or not mistake_type:
+            return []
+        filters = self._user_filter(user_id, {"mistake_type": mistake_type})
+        results = self.qdrant.search(
+            collection_name="mistake_examples",
+            vector=None,
+            limit=limit * 2,
+            filters=filters,
+            named_query={"vector_name": "context", "vector": query_embedding},
+        )
+
+        examples: List[dict] = []
+        seen_texts: Set[str] = set()
+        for result in results:
+            if result["score"] < self.min_similarity_score:
+                continue
+            payload = result.get("payload", {})
+            if exclude_mistake_id and payload.get("mistake_id") == exclude_mistake_id:
+                continue
+            text = (payload.get("text", "") or "").strip()
+            if not text or text in seen_texts:
+                continue
+            seen_texts.add(text)
+            examples.append(
+                {
+                    "text": text,
+                    "rule_message": str(payload.get("rule_message", "") or ""),
+                }
+            )
+            if len(examples) >= limit:
+                break
+        return examples
+
     def _retrieve_staged_context(
         self,
         query_embedding: List[float],
@@ -840,12 +891,34 @@ class RAGService:
             if lesson_key:
                 seen_lesson_targets.add(lesson_key)
 
+            mistake_type = str(payload.get("mistake_type", "") or "")
+            async with self.session_factory() as session:
+                example_count = await repo.count_examples_by_mistake_type(
+                    session, user_id, mistake_type
+                )
+                selection_index = await repo.count_lessons_by_mistake_type(
+                    session, user_id, mistake_type
+                )
+            approach_type = self.selector.select(
+                example_count=example_count,
+                selection_index=selection_index,
+                scores=None,  # score-based exploit phase not wired yet
+            )
+
             item_context = self._retrieve_staged_context(
                 list(context_vec),
                 user_filter,
                 [payload],
             )
-            lesson = self._construct_lesson(item_context)
+            if approach_type == "example_based":
+                item_context.similar_past_examples = self._retrieve_similar_examples(
+                    query_embedding=list(context_vec),
+                    user_id=user_id,
+                    mistake_type=mistake_type,
+                    exclude_mistake_id=str(payload.get("mistake_id", "") or "") or None,
+                )
+
+            lesson = self._construct_lesson(item_context, approach_type)
             artifact_id = await self._persist_lesson_artifact(
                 lesson=lesson,
                 user_id=user_id,
@@ -967,24 +1040,24 @@ class RAGService:
 
 
     def _construct_lesson(
-        self, context: ContextAssembly) -> LessonResponse:
+        self, context: ContextAssembly, approach_type: str
+    ) -> LessonResponse:
         primary_mistake_context: Optional[DetectedMistakeExample] = (
             context.detected_mistake_examples[0] if context.detected_mistake_examples else None
         )
 
         topic = self._extract_topic(primary_mistake_context)
-        approach_type = self._select_approach_type()
         handler = self._get_approach_handler(approach_type)
         explanation = handler.build_explanation(context, topic)
         exercises = handler.generate_exercises(primary_mistake_context)
 
-        # LLM override: use topic and approach_type from handler when available
+        # Use the LLM's chosen topic when available. The stored approach_type is the
+        # selected teaching approach (rule_based/example_based) so downstream scoring
+        # can attribute outcomes to the approach, not to generation status.
         if getattr(handler, "_last_llm_result", None):
             result = handler._last_llm_result
             if result.get("topic"):
                 topic = result["topic"]
-            if result.get("approach_type"):
-                approach_type = result["approach_type"]
 
         return LessonResponse(
             topic=topic,
@@ -1003,9 +1076,6 @@ class RAGService:
                 return desc.split(".")[0].strip()[:100]
 
         return "General Language Learning"
-
-    def _select_approach_type(self) -> str:
-        return "rule_based"
 
     def _get_approach_handler(self, approach_type: str) -> BaseApproach:
         return self._approach_registry.get(

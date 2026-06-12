@@ -226,3 +226,42 @@ async def has_positive_clamped_mistake_type(
     """True if any mistake_type has GREATEST(0, SUM(delta)) > 0 (same as top-1 non-empty)."""
     top = await top_mistake_types_by_clamped_score(session, user_id, 1)
     return bool(top)
+
+
+async def count_examples_by_mistake_type(
+    session: AsyncSession, user_id: str, mistake_type: str
+) -> int:
+    """Number of stored mistake_examples (example_id-bearing occurrences) the user
+    has for this mistake_type. Drives the approach-selection example gate."""
+    if not mistake_type:
+        return 0
+    stmt = (
+        select(func.count())
+        .select_from(MistakeOccurrence)
+        .where(
+            MistakeOccurrence.user_id == user_id,
+            MistakeOccurrence.mistake_type == mistake_type,
+            MistakeOccurrence.example_id.isnot(None),
+        )
+    )
+    r = await session.execute(stmt)
+    return int(r.scalar_one() or 0)
+
+
+async def count_lessons_by_mistake_type(
+    session: AsyncSession, user_id: str, mistake_type: str
+) -> int:
+    """Number of prior lesson_artifacts generated for this (user, mistake_type).
+    Used as the per-type selection index (rotation / exploration cadence)."""
+    if not mistake_type:
+        return 0
+    stmt = (
+        select(func.count())
+        .select_from(LessonArtifact)
+        .where(
+            LessonArtifact.user_id == user_id,
+            LessonArtifact.mistake_type == mistake_type,
+        )
+    )
+    r = await session.execute(stmt)
+    return int(r.scalar_one() or 0)
