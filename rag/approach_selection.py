@@ -9,8 +9,9 @@ Phases (by ``example_count``):
   * ``< EXPLORE_MIN``  -> baseline only (not enough material to teach by example).
   * ``EXPLORE_MIN..EXPLOIT_MIN - 1`` -> rotate across all approaches (exploration).
   * ``>= EXPLOIT_MIN`` -> exploit by score, with periodic exploration of the
-    runner-up. Active only when per-approach ``scores`` are supplied; until then
-    it safely falls back to rotation.
+    runner-up. ``scores`` maps approach name -> effectiveness (higher = better
+    post-lesson outcomes). When ``scores`` is ``None`` or incomplete, falls
+    back to rotation.
 
 ``selection_index`` is a per-``(user, mistake_type)`` monotonic counter (the number
 of prior lessons generated for that type). It drives deterministic rotation and
@@ -34,6 +35,10 @@ class ApproachSelector:
             raise ValueError(f"baseline {baseline!r} must be one of {list(approaches)}")
         self._approaches = list(approaches)
         self._baseline = baseline
+
+    @property
+    def approaches(self) -> list[str]:
+        return list(self._approaches)
 
     def select(
         self,

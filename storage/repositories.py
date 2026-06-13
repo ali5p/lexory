@@ -265,3 +265,64 @@ async def count_lessons_by_mistake_type(
     )
     r = await session.execute(stmt)
     return int(r.scalar_one() or 0)
+
+
+# Minimum exercise-linked scoring rows per approach before phase-3 exploit activates.
+MIN_APPROACH_SCORE_EVENTS = 2
+
+
+async def approach_effectiveness_scores_by_mistake_type(
+    session: AsyncSession,
+    user_id: str,
+    mistake_type: str,
+    approaches: Sequence[str],
+) -> Optional[dict[str, float]]:
+    """Per-approach effectiveness for approach selection (phase 3).
+
+    Derived from ``user_scoring_events`` joined through ``exercise_attempts`` to
+    ``lesson_artifacts`` — i.e. outcomes that follow a lesson delivered with a
+    given ``approach_type``.
+
+    Higher returned value = better outcomes (fewer post-lesson mistakes /
+    more exercise successes). Returns ``None`` when any registered approach lacks
+    enough exercise-linked events to compare fairly.
+    """
+    if not mistake_type or not approaches:
+        return None
+
+    stmt = (
+        select(
+            LessonArtifact.approach_type,
+            func.sum(UserScoringEvent.delta).label("raw_sum"),
+            func.count(UserScoringEvent.id).label("n"),
+        )
+        .select_from(UserScoringEvent)
+        .join(
+            ExerciseAttempt,
+            ExerciseAttempt.exercise_attempt_id
+            == UserScoringEvent.session_or_exercise_id,
+        )
+        .join(
+            LessonArtifact,
+            LessonArtifact.artifact_id == ExerciseAttempt.lesson_artifact_id,
+        )
+        .where(
+            UserScoringEvent.user_id == user_id,
+            LessonArtifact.user_id == user_id,
+            LessonArtifact.mistake_type == mistake_type,
+            LessonArtifact.approach_type.in_(list(approaches)),
+        )
+        .group_by(LessonArtifact.approach_type)
+    )
+    r = await session.execute(stmt)
+    rows = {str(row[0]): (float(row[1] or 0), int(row[2] or 0)) for row in r.all()}
+
+    scores: dict[str, float] = {}
+    for name in approaches:
+        raw_sum, n = rows.get(name, (0.0, 0))
+        if n < MIN_APPROACH_SCORE_EVENTS:
+            return None
+        # Lower mistake delta sum = better; invert so selector ranks higher = better.
+        scores[name] = -raw_sum
+
+    return scores

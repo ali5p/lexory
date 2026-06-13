@@ -899,10 +899,16 @@ class RAGService:
                 selection_index = await repo.count_lessons_by_mistake_type(
                     session, user_id, mistake_type
                 )
+                approach_scores = await repo.approach_effectiveness_scores_by_mistake_type(
+                    session,
+                    user_id,
+                    mistake_type,
+                    self.selector.approaches,
+                )
             approach_type = self.selector.select(
                 example_count=example_count,
                 selection_index=selection_index,
-                scores=None,  # score-based exploit phase not wired yet
+                scores=approach_scores,
             )
 
             item_context = self._retrieve_staged_context(
