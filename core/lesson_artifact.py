@@ -27,6 +27,8 @@ class LessonArtifactRecord(BaseModel):
     explanation: str = ""
     exercises: list[str] = Field(default_factory=list)
     approach_type: str = ""
+    selection_index: int = 0
+    is_contrast_lesson: bool = False
     created_at: str = ""
 
     @classmethod
@@ -39,6 +41,8 @@ class LessonArtifactRecord(BaseModel):
         session_id: Optional[str],
         primary_mistake: Optional[DetectedMistakeExample],
         created_at: datetime,
+        selection_index: int = 0,
+        is_contrast_lesson: bool = False,
     ) -> LessonArtifactRecord:
         mistake_context = ""
         if primary_mistake and primary_mistake.examples:
@@ -55,6 +59,8 @@ class LessonArtifactRecord(BaseModel):
             explanation=lesson.explanation,
             exercises=list(lesson.exercises),
             approach_type=lesson.approach_type,
+            selection_index=selection_index,
+            is_contrast_lesson=is_contrast_lesson,
             created_at=created_at.isoformat(),
         )
 
@@ -69,6 +75,8 @@ class LessonArtifactRecord(BaseModel):
                 "exercises",
                 "approach_type",
                 "mistake_type",
+                "selection_index",
+                "is_contrast_lesson",
                 "created_at",
             }
         )
