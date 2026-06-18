@@ -54,6 +54,18 @@ class ApproachSelector:
             return self._rotate(selection_index)
         return self._exploit(selection_index, scores)
 
+    def is_contrast_lesson(
+        self,
+        *,
+        example_count: int,
+        selection_index: int,
+        scores: Optional[Mapping[str, float]] = None,
+    ) -> bool:
+        """True when exploit phase selects the runner-up approach as a contrast probe."""
+        if example_count < self.EXPLOIT_MIN or not scores:
+            return False
+        return selection_index % self.EXPLORE_EVERY == self.EXPLORE_EVERY - 1
+
     def _rotate(self, selection_index: int) -> str:
         idx = selection_index % len(self._approaches)
         return self._approaches[idx]

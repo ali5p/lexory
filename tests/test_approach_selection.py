@@ -40,6 +40,22 @@ def test_phase3_exploits_best_with_periodic_runner_up():
     assert s.select(example_count=9, selection_index=5, scores=scores) == "rule_based"
 
 
+def test_is_contrast_lesson_only_in_exploit_phase_on_every_third_index():
+    s = _selector()
+    scores = {"rule_based": 0.2, "example_based": 0.9}
+
+    assert not s.is_contrast_lesson(example_count=2, selection_index=2, scores=scores)
+    assert not s.is_contrast_lesson(example_count=8, selection_index=2, scores=scores)
+    assert not s.is_contrast_lesson(example_count=9, selection_index=2, scores=None)
+
+    assert not s.is_contrast_lesson(example_count=9, selection_index=0, scores=scores)
+    assert not s.is_contrast_lesson(example_count=9, selection_index=1, scores=scores)
+    assert s.is_contrast_lesson(example_count=9, selection_index=2, scores=scores)
+    assert not s.is_contrast_lesson(example_count=9, selection_index=3, scores=scores)
+    assert s.is_contrast_lesson(example_count=9, selection_index=5, scores=scores)
+    assert s.is_contrast_lesson(example_count=9, selection_index=8, scores=scores)
+
+
 def test_invalid_construction():
     with pytest.raises(ValueError):
         ApproachSelector(approaches=[], baseline="rule_based")

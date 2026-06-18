@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from sqlalchemy import Float, String, Text
+from sqlalchemy import Boolean, Float, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -37,6 +37,8 @@ class LessonArtifact(Base):
     exercises: Mapped[list] = mapped_column(JSONB, default=list)
     approach_type: Mapped[str] = mapped_column(String)
     mistake_type: Mapped[str] = mapped_column(String, index=True, default="")
+    selection_index: Mapped[int] = mapped_column(Integer, default=0)
+    is_contrast_lesson: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[str] = mapped_column(String, index=True)
 
 

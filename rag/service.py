@@ -910,6 +910,11 @@ class RAGService:
                 selection_index=selection_index,
                 scores=approach_scores,
             )
+            is_contrast_lesson = self.selector.is_contrast_lesson(
+                example_count=example_count,
+                selection_index=selection_index,
+                scores=approach_scores,
+            )
 
             item_context = self._retrieve_staged_context(
                 list(context_vec),
@@ -931,6 +936,8 @@ class RAGService:
                 session_id=session_id,
                 context=item_context,
                 query_embedding=list(context_vec),
+                selection_index=selection_index,
+                is_contrast_lesson=is_contrast_lesson,
             )
             items.append(
                 LessonItemResponse(
@@ -1000,6 +1007,8 @@ class RAGService:
         session_id: Optional[str],
         context: ContextAssembly,
         query_embedding: List[float],
+        selection_index: int = 0,
+        is_contrast_lesson: bool = False,
     ) -> str:
         artifact_id = str(uuid.uuid4())
         created_at = datetime.now(timezone.utc)
@@ -1015,6 +1024,8 @@ class RAGService:
             session_id=session_id,
             primary_mistake=primary_mistake,
             created_at=created_at,
+            selection_index=selection_index,
+            is_contrast_lesson=is_contrast_lesson,
         )
 
         async with self.session_factory() as session:
