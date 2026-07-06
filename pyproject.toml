@@ -31,6 +31,11 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.11"
+
 # CPU-only PyTorch for smaller Docker builds. Remove for local GPU dev.
 [[tool.uv.index]]
 name = "pytorch-cpu"

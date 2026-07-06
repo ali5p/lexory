@@ -39,6 +39,7 @@ class LessonArtifact(Base):
     mistake_type: Mapped[str] = mapped_column(String, index=True, default="")
     selection_index: Mapped[int] = mapped_column(Integer, default=0)
     is_contrast_lesson: Mapped[bool] = mapped_column(Boolean, default=False)
+    example_count_at_generation: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[str] = mapped_column(String, index=True)
 
 

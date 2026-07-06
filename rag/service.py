@@ -904,6 +904,7 @@ class RAGService:
                     user_id,
                     mistake_type,
                     self.selector.approaches,
+                    comparison_min_example_count=self.selector.COMPARISON_MIN_EXAMPLE_COUNT,
                 )
             approach_type = self.selector.select(
                 example_count=example_count,
@@ -938,6 +939,7 @@ class RAGService:
                 query_embedding=list(context_vec),
                 selection_index=selection_index,
                 is_contrast_lesson=is_contrast_lesson,
+                example_count_at_generation=example_count,
             )
             items.append(
                 LessonItemResponse(
@@ -1009,6 +1011,7 @@ class RAGService:
         query_embedding: List[float],
         selection_index: int = 0,
         is_contrast_lesson: bool = False,
+        example_count_at_generation: int = 0,
     ) -> str:
         artifact_id = str(uuid.uuid4())
         created_at = datetime.now(timezone.utc)
@@ -1026,6 +1029,7 @@ class RAGService:
             created_at=created_at,
             selection_index=selection_index,
             is_contrast_lesson=is_contrast_lesson,
+            example_count_at_generation=example_count_at_generation,
         )
 
         async with self.session_factory() as session:

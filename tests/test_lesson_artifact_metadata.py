@@ -25,9 +25,11 @@ def test_lesson_artifact_record_sql_row_includes_selection_metadata():
         created_at=datetime(2026, 6, 14, tzinfo=timezone.utc),
         selection_index=5,
         is_contrast_lesson=True,
+        example_count_at_generation=4,
     )
 
     row = record.sql_row()
 
     assert row["selection_index"] == 5
     assert row["is_contrast_lesson"] is True
+    assert row["example_count_at_generation"] == 4

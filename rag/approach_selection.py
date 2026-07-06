@@ -27,6 +27,10 @@ class ApproachSelector:
     EXPLORE_MIN = 3
     EXPLOIT_MIN = 9
     EXPLORE_EVERY = 3  # in exploit phase, every Nth selection probes the runner-up
+    # Approach score comparison excludes only the coldest baseline lessons
+    # (example counts 0 and 1). Count 2 is still baseline-only but kept in scores:
+    # rotation at EXPLORE_MIN starts with rule_based.
+    COMPARISON_MIN_EXAMPLE_COUNT = EXPLORE_MIN - 1
 
     def __init__(self, approaches: Sequence[str], baseline: str):
         if not approaches:

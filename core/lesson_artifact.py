@@ -29,6 +29,7 @@ class LessonArtifactRecord(BaseModel):
     approach_type: str = ""
     selection_index: int = 0
     is_contrast_lesson: bool = False
+    example_count_at_generation: int = 0
     created_at: str = ""
 
     @classmethod
@@ -43,6 +44,7 @@ class LessonArtifactRecord(BaseModel):
         created_at: datetime,
         selection_index: int = 0,
         is_contrast_lesson: bool = False,
+        example_count_at_generation: int = 0,
     ) -> LessonArtifactRecord:
         mistake_context = ""
         if primary_mistake and primary_mistake.examples:
@@ -61,6 +63,7 @@ class LessonArtifactRecord(BaseModel):
             approach_type=lesson.approach_type,
             selection_index=selection_index,
             is_contrast_lesson=is_contrast_lesson,
+            example_count_at_generation=example_count_at_generation,
             created_at=created_at.isoformat(),
         )
 
@@ -77,6 +80,7 @@ class LessonArtifactRecord(BaseModel):
                 "mistake_type",
                 "selection_index",
                 "is_contrast_lesson",
+                "example_count_at_generation",
                 "created_at",
             }
         )

@@ -61,6 +61,9 @@ async def upsert_artifact(session: AsyncSession, data: dict) -> None:
         mistake_type=data.get("mistake_type", ""),
         selection_index=int(data.get("selection_index", 0) or 0),
         is_contrast_lesson=bool(data.get("is_contrast_lesson", False)),
+        example_count_at_generation=int(
+            data.get("example_count_at_generation", 0) or 0
+        ),
         created_at=data.get("created_at", ""),
     )
     await session.merge(row)
@@ -278,12 +281,17 @@ async def approach_effectiveness_scores_by_mistake_type(
     user_id: str,
     mistake_type: str,
     approaches: Sequence[str],
+    *,
+    comparison_min_example_count: int,
 ) -> Optional[dict[str, float]]:
     """Per-approach effectiveness for approach selection (phase 3).
 
     Derived from ``user_scoring_events`` joined through ``exercise_attempts`` to
     ``lesson_artifacts`` — i.e. outcomes that follow a lesson delivered with a
-    given ``approach_type``.
+    given ``approach_type``. Lessons from the coldest baseline-only window
+    (``example_count_at_generation < comparison_min_example_count``, typically
+    counts 0 and 1) are excluded; the last baseline-only lesson (count 2) stays
+    in comparison because rotation at ``EXPLORE_MIN`` opens with ``rule_based``.
 
     Higher returned value = better outcomes (fewer post-lesson mistakes /
     more exercise successes). Returns ``None`` when any registered approach lacks
@@ -313,6 +321,7 @@ async def approach_effectiveness_scores_by_mistake_type(
             LessonArtifact.user_id == user_id,
             LessonArtifact.mistake_type == mistake_type,
             LessonArtifact.approach_type.in_(list(approaches)),
+            LessonArtifact.example_count_at_generation >= comparison_min_example_count,
         )
         .group_by(LessonArtifact.approach_type)
     )
