@@ -6,6 +6,7 @@ from typing import Optional, Sequence
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.activity_timeline import UserActivity, build_activity_timeline
 from storage.models import (
     ExerciseAttempt,
     LessonArtifact,
@@ -76,6 +77,7 @@ async def insert_exercise_attempt(session: AsyncSession, data: dict) -> None:
         lesson_artifact_id=data["lesson_artifact_id"],
         user_id=data["user_id"],
         attempt_timestamp=data["attempt_timestamp"],
+        origin_session_id=data.get("origin_session_id", ""),
     )
     session.add(row)
     await session.flush()
@@ -337,3 +339,85 @@ async def approach_effectiveness_scores_by_mistake_type(
         scores[name] = -raw_sum
 
     return scores
+
+
+async def get_user_activity_timeline(
+    session: AsyncSession, user_id: str
+) -> list[UserActivity]:
+    """Ordered submit + exercise activities for one user (activity_index 0 = earliest)."""
+    submit_sessions = await _fetch_submit_session_starts(session, user_id)
+    exercise_rows = await _fetch_exercise_activity_rows(session, user_id)
+    return build_activity_timeline(
+        submit_sessions=submit_sessions,
+        exercise_attempts=exercise_rows,
+    )
+
+
+async def _fetch_submit_session_starts(
+    session: AsyncSession, user_id: str
+) -> list[tuple[str, str]]:
+    """Earliest timestamp per submit session_id (occurrences + lesson artifacts)."""
+    occ_stmt = (
+        select(
+            MistakeOccurrence.session_id,
+            func.min(MistakeOccurrence.detected_at).label("occurred_at"),
+        )
+        .where(
+            MistakeOccurrence.user_id == user_id,
+            MistakeOccurrence.session_id != "",
+            MistakeOccurrence.source != "exercise_attempt",
+        )
+        .group_by(MistakeOccurrence.session_id)
+    )
+    art_stmt = (
+        select(
+            LessonArtifact.session_id,
+            func.min(LessonArtifact.created_at).label("occurred_at"),
+        )
+        .where(
+            LessonArtifact.user_id == user_id,
+            LessonArtifact.session_id != "",
+        )
+        .group_by(LessonArtifact.session_id)
+    )
+    occ_r = await session.execute(occ_stmt)
+    art_r = await session.execute(art_stmt)
+
+    earliest: dict[str, str] = {}
+    for session_id, occurred_at in occ_r.all():
+        sid = str(session_id or "")
+        at = str(occurred_at or "")
+        if sid and (sid not in earliest or at < earliest[sid]):
+            earliest[sid] = at
+    for session_id, occurred_at in art_r.all():
+        sid = str(session_id or "")
+        at = str(occurred_at or "")
+        if sid and (sid not in earliest or at < earliest[sid]):
+            earliest[sid] = at
+
+    return list(earliest.items())
+
+
+async def _fetch_exercise_activity_rows(
+    session: AsyncSession, user_id: str
+) -> list[tuple[str, str, Optional[str], Optional[str]]]:
+    stmt = (
+        select(
+            ExerciseAttempt.exercise_attempt_id,
+            ExerciseAttempt.attempt_timestamp,
+            ExerciseAttempt.lesson_artifact_id,
+            ExerciseAttempt.origin_session_id,
+        )
+        .where(ExerciseAttempt.user_id == user_id)
+        .order_by(ExerciseAttempt.attempt_timestamp)
+    )
+    r = await session.execute(stmt)
+    return [
+        (
+            str(row[0]),
+            str(row[1]),
+            str(row[2]) if row[2] else None,
+            str(row[3]) if row[3] else None,
+        )
+        for row in r.all()
+    ]

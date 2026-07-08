@@ -580,6 +580,7 @@ class RAGService:
                     "lesson_artifact_id": attempt.lesson_artifact_id,
                     "user_id": attempt.user_id,
                     "attempt_timestamp": attempt_timestamp.isoformat(),
+                    "origin_session_id": art.session_id if art else "",
                 })
 
                 await session.commit()

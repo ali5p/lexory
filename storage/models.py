@@ -50,6 +50,7 @@ class ExerciseAttempt(Base):
     lesson_artifact_id: Mapped[str] = mapped_column(String, index=True)
     user_id: Mapped[str] = mapped_column(String, index=True)
     attempt_timestamp: Mapped[str] = mapped_column(String, index=True)
+    origin_session_id: Mapped[str] = mapped_column(String, default="")
 
 
 class UserScoringEvent(Base):
