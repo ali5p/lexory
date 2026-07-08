@@ -1,16 +1,24 @@
 """Thin async repository functions for PostgreSQL persistence."""
 
 import uuid
+from datetime import datetime, timezone
 from typing import Optional, Sequence
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.activity_timeline import UserActivity, build_activity_timeline
+from core.mistake_type_stats import (
+    MistakeTypeStatsConfig,
+    MistakeTypeStatsRow,
+    ScoringEventRow,
+    compute_mistake_type_stats,
+)
 from storage.models import (
     ExerciseAttempt,
     LessonArtifact,
     MistakeOccurrence,
+    UserMistakeTypeStats,
     UserScoringEvent,
 )
 
@@ -421,3 +429,141 @@ async def _fetch_exercise_activity_rows(
         )
         for row in r.all()
     ]
+
+
+async def recompute_user_mistake_type_stats(
+    session: AsyncSession,
+    user_id: str,
+    *,
+    config: MistakeTypeStatsConfig | None = None,
+    computed_at: str | None = None,
+) -> int:
+    """Recompute and persist per-MT stats for one user. Returns row count."""
+    timeline = await get_user_activity_timeline(session, user_id)
+    scoring_events = await fetch_scoring_events_for_user(session, user_id)
+    text_to_session = await fetch_text_to_session_map(session, user_id)
+    rows = compute_mistake_type_stats(
+        user_id=user_id,
+        timeline=timeline,
+        scoring_events=scoring_events,
+        text_to_session=text_to_session,
+        config=config,
+    )
+    ts = computed_at or datetime.now(timezone.utc).isoformat()
+    await replace_user_mistake_type_stats(session, user_id, rows, computed_at=ts)
+    return len(rows)
+
+
+async def fetch_scoring_events_for_user(
+    session: AsyncSession, user_id: str
+) -> list[ScoringEventRow]:
+    stmt = (
+        select(
+            UserScoringEvent.mistake_type,
+            UserScoringEvent.delta,
+            UserScoringEvent.session_or_exercise_id,
+        )
+        .where(UserScoringEvent.user_id == user_id)
+        .order_by(UserScoringEvent.occurred_at)
+    )
+    r = await session.execute(stmt)
+    return [
+        ScoringEventRow(
+            mistake_type=str(row[0] or ""),
+            delta=float(row[1] or 0),
+            session_or_exercise_id=str(row[2] or ""),
+        )
+        for row in r.all()
+    ]
+
+
+async def fetch_text_to_session_map(
+    session: AsyncSession, user_id: str
+) -> dict[str, str]:
+    """Map submit user_text_id -> session_id from mistake occurrences."""
+    stmt = (
+        select(MistakeOccurrence.user_text_id, MistakeOccurrence.session_id)
+        .where(
+            MistakeOccurrence.user_id == user_id,
+            MistakeOccurrence.user_text_id != "",
+            MistakeOccurrence.session_id != "",
+            MistakeOccurrence.source != "exercise_attempt",
+        )
+        .distinct()
+    )
+    r = await session.execute(stmt)
+    return {
+        str(row[0]): str(row[1])
+        for row in r.all()
+        if row[0] and row[1]
+    }
+
+
+async def replace_user_mistake_type_stats(
+    session: AsyncSession,
+    user_id: str,
+    rows: list[MistakeTypeStatsRow],
+    computed_at: str,
+) -> None:
+    await session.execute(
+        delete(UserMistakeTypeStats).where(UserMistakeTypeStats.user_id == user_id)
+    )
+    for row in rows:
+        session.add(
+            UserMistakeTypeStats(
+                user_id=row.user_id,
+                mistake_type=row.mistake_type,
+                first_activity_index=row.first_activity_index,
+                lifetime_score=row.lifetime_score,
+                recent_burden=row.recent_burden,
+                historical_burden=row.historical_burden,
+                is_new=row.is_new,
+                is_improving=row.is_improving,
+                is_relapsed=row.is_relapsed,
+                priority_score=row.priority_score,
+                total_activity_count=row.total_activity_count,
+                computed_at=computed_at,
+            )
+        )
+    await session.flush()
+
+
+async def get_mistake_type_stats_for_user(
+    session: AsyncSession, user_id: str
+) -> list[MistakeTypeStatsRow]:
+    stmt = (
+        select(UserMistakeTypeStats)
+        .where(UserMistakeTypeStats.user_id == user_id)
+        .order_by(UserMistakeTypeStats.priority_score.desc())
+    )
+    r = await session.execute(stmt)
+    return [
+        MistakeTypeStatsRow(
+            user_id=row.user_id,
+            mistake_type=row.mistake_type,
+            first_activity_index=row.first_activity_index,
+            lifetime_score=row.lifetime_score,
+            recent_burden=row.recent_burden,
+            historical_burden=row.historical_burden,
+            is_new=row.is_new,
+            is_improving=row.is_improving,
+            is_relapsed=row.is_relapsed,
+            priority_score=row.priority_score,
+            total_activity_count=row.total_activity_count,
+        )
+        for row in r.scalars().all()
+    ]
+
+
+async def top_priority_mistake_types(
+    session: AsyncSession, user_id: str, k: int = 3
+) -> list[str]:
+    """Top-k MTs by batch priority_score (empty if batch has not run)."""
+    stmt = (
+        select(UserMistakeTypeStats.mistake_type)
+        .where(UserMistakeTypeStats.user_id == user_id)
+        .order_by(UserMistakeTypeStats.priority_score.desc())
+        .limit(k)
+    )
+    r = await session.execute(stmt)
+    return [str(row[0]) for row in r.all() if row[0]]

@@ -69,3 +69,22 @@ class UserScoringEvent(Base):
     session_or_exercise_id: Mapped[str] = mapped_column(String, index=True)
     occurred_at: Mapped[str] = mapped_column(String, index=True)
     delta: Mapped[float] = mapped_column(Float, index=False)
+
+
+class UserMistakeTypeStats(Base):
+    """Batch-materialized per-user MT priority stats (activity-index windows)."""
+
+    __tablename__ = "user_mistake_type_stats"
+
+    user_id: Mapped[str] = mapped_column(String, primary_key=True)
+    mistake_type: Mapped[str] = mapped_column(String, primary_key=True)
+    first_activity_index: Mapped[int] = mapped_column(Integer)
+    lifetime_score: Mapped[float] = mapped_column(Float)
+    recent_burden: Mapped[float] = mapped_column(Float)
+    historical_burden: Mapped[float] = mapped_column(Float)
+    is_new: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_improving: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_relapsed: Mapped[bool] = mapped_column(Boolean, default=False)
+    priority_score: Mapped[float] = mapped_column(Float, index=True)
+    total_activity_count: Mapped[int] = mapped_column(Integer, default=0)
+    computed_at: Mapped[str] = mapped_column(String, index=True)

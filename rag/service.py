@@ -423,6 +423,11 @@ class RAGService:
             },
         )
 
+    async def _refresh_user_mistake_type_stats(self, user_id: str) -> None:
+        async with self.session_factory() as session:
+            await repo.recompute_user_mistake_type_stats(session, user_id)
+            await session.commit()
+
     async def submit_and_lesson(self, text: str, user_id: str) -> SubmitResponse:
         """Combined ingest + lesson generation. Single flow trigger."""
         session_id: str
@@ -484,7 +489,7 @@ class RAGService:
                 explanation=expl,
                 exercises=[],
             )
-            return SubmitResponse(
+            response = SubmitResponse(
                 user_text_id=user_text_id,
                 session_id=session_id,
                 detected_mistakes=detected_mistakes,
@@ -496,20 +501,22 @@ class RAGService:
                     )
                 ],
             )
+        else:
+            lesson_items = await self._generate_atomic_lesson_items(
+                query_points=query_points,
+                user_id=user_id,
+                session_id=session_id,
+                user_filter=user_filter,
+            )
+            response = SubmitResponse(
+                user_text_id=user_text_id,
+                session_id=session_id,
+                detected_mistakes=detected_mistakes,
+                lesson_items=lesson_items,
+            )
 
-        lesson_items = await self._generate_atomic_lesson_items(
-            query_points=query_points,
-            user_id=user_id,
-            session_id=session_id,
-            user_filter=user_filter,
-        )
-
-        return SubmitResponse(
-            user_text_id=user_text_id,
-            session_id=session_id,
-            detected_mistakes=detected_mistakes,
-            lesson_items=lesson_items,
-        )
+        await self._refresh_user_mistake_type_stats(user_id)
+        return response
 
 
     async def process_exercise_attempt(self, attempt: ExerciseAttempt) -> dict:
@@ -584,6 +591,8 @@ class RAGService:
                 })
 
                 await session.commit()
+
+            await self._refresh_user_mistake_type_stats(attempt.user_id)
 
             return {
                 "exercise_attempt_id": exercise_attempt_id,
@@ -1077,8 +1086,8 @@ class RAGService:
         # selected teaching approach (rule_based/example_based) so downstream scoring
         # can attribute outcomes to the approach, not to generation status.
         if getattr(handler, "_last_llm_result", None):
-            result = handler._last_llm_result
-            if result.get("topic"):
+            result = getattr(handler, "_last_llm_result", None)
+            if result and result.get("topic"):
                 topic = result["topic"]
 
         return LessonResponse(
