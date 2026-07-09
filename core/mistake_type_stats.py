@@ -1,7 +1,7 @@
 """Per-user mistake_type stats from activity-index windows (not calendar time).
 
-Used by the batch job to materialize ``user_mistake_type_stats`` for internal
-priority ranking (recent burden, new MT, relapsed, improving, lifetime).
+Used to materialize ``user_mistake_type_stats`` for internal priority ranking
+(recent burden, new MT, relapsed, improving, lifetime).
 """
 
 from __future__ import annotations
@@ -43,9 +43,9 @@ class MistakeTypeStatsRow(BaseModel):
     user_id: str
     mistake_type: str
     first_activity_index: int = Field(
-        description="Earliest activity index where this MT scored."
+        description="Earliest activity index where this MT scored (0 if unmapped)."
     )
-    lifetime_score: float = Field(description="Clamped SUM(delta) over all activities.")
+    lifetime_score: float = Field(description="Clamped SUM(delta) over all scoring events.")
     recent_burden: float = Field(description="SUM(delta) in the last recent_k activities.")
     historical_burden: float = Field(
         description="SUM(delta) in activities before the recent window."
@@ -71,57 +71,75 @@ def compute_mistake_type_stats(
 ) -> list[MistakeTypeStatsRow]:
     """Compute per-MT stats for one user from timeline + scoring events."""
     cfg = config or MistakeTypeStatsConfig()
-    if not timeline or not scoring_events:
+    if not scoring_events:
         return []
 
-    activity_index_by_id = {a.activity_id: a.activity_index for a in timeline}
-    max_idx = timeline[-1].activity_index
-    recent_start = max(0, max_idx - cfg.recent_k + 1)
+    all_deltas_by_type: dict[str, list[float]] = {}
+    mapped_by_type: dict[str, list[tuple[int, float]]] = {}
 
-    by_type: dict[str, list[tuple[int, float]]] = {}
+    if timeline:
+        activity_index_by_id = {a.activity_id: a.activity_index for a in timeline}
+        max_idx = timeline[-1].activity_index
+        recent_start = max(0, max_idx - cfg.recent_k + 1)
+    else:
+        activity_index_by_id = {}
+        max_idx = -1
+        recent_start = 0
+
     for event in scoring_events:
         mt = (event.mistake_type or "").strip()
         if not mt:
             continue
+        all_deltas_by_type.setdefault(mt, []).append(event.delta)
+        if not timeline:
+            continue
         idx = _event_activity_index(
             event.session_or_exercise_id, activity_index_by_id, text_to_session
         )
-        if idx is None:
-            continue
-        by_type.setdefault(mt, []).append((idx, event.delta))
+        if idx is not None:
+            mapped_by_type.setdefault(mt, []).append((idx, event.delta))
 
     rows: list[MistakeTypeStatsRow] = []
-    for mt, indexed_deltas in sorted(by_type.items()):
-        first_idx = min(i for i, _ in indexed_deltas)
-        lifetime_raw = sum(d for _, d in indexed_deltas)
-        lifetime_score = max(0.0, lifetime_raw)
-        recent_burden = _burden_in_range(indexed_deltas, recent_start, max_idx)
-        historical_burden = _burden_in_range(indexed_deltas, 0, recent_start - 1)
+    for mt in sorted(all_deltas_by_type):
+        lifetime_score = max(0.0, sum(all_deltas_by_type[mt]))
+        indexed_deltas = mapped_by_type.get(mt, [])
 
-        is_new = first_idx >= max(0, max_idx - cfg.new_n + 1)
-        is_improving = _is_improving(indexed_deltas, max_idx, cfg)
-        is_relapsed = _is_relapsed(
-            first_idx=first_idx,
-            max_idx=max_idx,
-            recent_burden=recent_burden,
-            historical_burden=historical_burden,
-            indexed_deltas=indexed_deltas,
-            cfg=cfg,
-        )
-
-        improve_delta = 0.0
-        if is_improving:
-            improve_delta = _improvement_delta(indexed_deltas, max_idx, cfg.improve_m)
-
-        priority = (
-            cfg.w_recent * recent_burden
-            + cfg.w_lifetime * lifetime_score
-            + cfg.w_new * (1.0 if is_new else 0.0)
-            + cfg.w_relapsed * (1.0 if is_relapsed else 0.0)
-            + cfg.w_historical
-            * (historical_burden if recent_burden <= cfg.quiet_threshold else 0.0)
-            - cfg.w_improving * improve_delta
-        )
+        if indexed_deltas:
+            first_idx = min(i for i, _ in indexed_deltas)
+            recent_burden = _burden_in_range(indexed_deltas, recent_start, max_idx)
+            historical_burden = _burden_in_range(indexed_deltas, 0, recent_start - 1)
+            is_new = first_idx >= max(0, max_idx - cfg.new_n + 1)
+            is_improving = _is_improving(indexed_deltas, max_idx, cfg)
+            is_relapsed = _is_relapsed(
+                first_idx=first_idx,
+                max_idx=max_idx,
+                recent_burden=recent_burden,
+                historical_burden=historical_burden,
+                indexed_deltas=indexed_deltas,
+                cfg=cfg,
+            )
+            improve_delta = (
+                _improvement_delta(indexed_deltas, max_idx, cfg.improve_m)
+                if is_improving
+                else 0.0
+            )
+            priority = (
+                cfg.w_recent * recent_burden
+                + cfg.w_lifetime * lifetime_score
+                + cfg.w_new * (1.0 if is_new else 0.0)
+                + cfg.w_relapsed * (1.0 if is_relapsed else 0.0)
+                + cfg.w_historical
+                * (historical_burden if recent_burden <= cfg.quiet_threshold else 0.0)
+                - cfg.w_improving * improve_delta
+            )
+        else:
+            first_idx = 0
+            recent_burden = 0.0
+            historical_burden = 0.0
+            is_new = False
+            is_improving = False
+            is_relapsed = False
+            priority = cfg.w_lifetime * lifetime_score
 
         rows.append(
             MistakeTypeStatsRow(

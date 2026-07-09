@@ -613,12 +613,12 @@ class RAGService:
 
     async def _get_fallback_points(self, user_id: str) -> List[dict]:
         """
-        When there are no session_candidate_points: top-k mistake_type by clamped aggregate
-        score (tie-break: latest occurred_at), then first mistake_examples point per type.
+        When there are no session_candidate_points: top-k mistake_type by trend-aware
+        priority stats (user_mistake_type_stats), then first mistake_examples point per type.
         """
         out: List[dict] = []
         async with self.session_factory() as session:
-            top_types = await repo.top_mistake_types_by_clamped_score(
+            top_types = await repo.top_priority_mistake_types(
                 session, user_id, k=self.max_primary_mistakes
             )
         for mt in top_types:
@@ -645,7 +645,7 @@ class RAGService:
         Returns selected point-like dicts for lesson generation.
         a) Session candidates: select top-k current-session mistake types by aggregate
            user score.
-        b) Fallback: _get_fallback_points (PostgreSQL scores → Qdrant mistake_examples).
+        b) Fallback: _get_fallback_points (priority stats → Qdrant mistake_examples).
         c) Neither: [] → no usable session context.
         """
         points = session_candidate_points or []

@@ -16,16 +16,33 @@ def _timeline(submit_count: int) -> list[UserActivity]:
     return build_activity_timeline(submit_sessions=sessions, exercise_attempts=[])
 
 
-def test_empty_inputs_return_no_rows():
-    assert (
-        compute_mistake_type_stats(
-            user_id="u1",
-            timeline=[],
-            scoring_events=[ScoringEventRow(mistake_type="x", delta=1.0, session_or_exercise_id="a")],
-            text_to_session={},
-        )
-        == []
+def test_empty_timeline_still_emits_lifetime_only_rows():
+    rows = compute_mistake_type_stats(
+        user_id="u1",
+        timeline=[],
+        scoring_events=[ScoringEventRow(mistake_type="x", delta=1.0, session_or_exercise_id="a")],
+        text_to_session={},
     )
+    assert len(rows) == 1
+    assert rows[0].lifetime_score == 1.0
+    assert rows[0].recent_burden == 0.0
+    assert rows[0].is_new is False
+
+
+def test_unmapped_events_still_count_toward_lifetime():
+    timeline = _timeline(2)
+    rows = compute_mistake_type_stats(
+        user_id="u1",
+        timeline=timeline,
+        scoring_events=[
+            ScoringEventRow(mistake_type="articles", delta=1.0, session_or_exercise_id="orphan-id"),
+            ScoringEventRow(mistake_type="articles", delta=1.0, session_or_exercise_id="sess-0"),
+        ],
+        text_to_session={},
+    )
+    assert len(rows) == 1
+    assert rows[0].lifetime_score == 2.0
+    assert rows[0].recent_burden == 1.0
 
 
 def test_maps_user_text_id_to_submit_activity():
