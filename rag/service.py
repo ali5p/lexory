@@ -72,6 +72,7 @@ class RAGService:
         self.text_store = InMemoryTextStore()
         self.max_context_items = 10
         self.max_primary_mistakes = 3
+        self.supplemental_every_n_submits = 2
         self.min_similarity_score = 0.5
         self.semantic_dedup_threshold = 0.9
         from llm.ollama_adapter import OllamaAdapter
@@ -508,6 +509,14 @@ class RAGService:
                 session_id=session_id,
                 user_filter=user_filter,
             )
+            if session_candidate_points:
+                lesson_items = await self._maybe_add_supplemental_lesson_item(
+                    items=lesson_items,
+                    query_points=query_points,
+                    user_id=user_id,
+                    session_id=session_id,
+                    user_filter=user_filter,
+                )
             response = SubmitResponse(
                 user_text_id=user_text_id,
                 session_id=session_id,
@@ -891,78 +900,146 @@ class RAGService:
         items: List[LessonItemResponse] = []
         seen_lesson_targets: Set[str] = set()
         for point in query_points:
-            context_vec = point.get("vectors", {}).get("context")
-            payload = point.get("payload", {})
-            if not context_vec or len(context_vec) != 384 or not payload:
-                continue
-            lesson_key = self._lesson_target_key(payload)
+            lesson_key = self._lesson_target_key(point.get("payload", {}))
             if lesson_key in seen_lesson_targets:
+                continue
+            item = await self._generate_lesson_item_from_point(
+                point=point,
+                user_id=user_id,
+                session_id=session_id,
+                user_filter=user_filter,
+            )
+            if item is None:
                 continue
             if lesson_key:
                 seen_lesson_targets.add(lesson_key)
+            items.append(item)
+        return items
 
-            mistake_type = str(payload.get("mistake_type", "") or "")
-            async with self.session_factory() as session:
-                example_count = await repo.count_examples_by_mistake_type(
-                    session, user_id, mistake_type
-                )
-                selection_index = await repo.count_lessons_by_mistake_type(
-                    session, user_id, mistake_type
-                )
-                approach_scores = await repo.approach_effectiveness_scores_by_mistake_type(
-                    session,
-                    user_id,
-                    mistake_type,
-                    self.selector.approaches,
-                    comparison_min_example_count=self.selector.COMPARISON_MIN_EXAMPLE_COUNT,
-                )
-            approach_type = self.selector.select(
-                example_count=example_count,
-                selection_index=selection_index,
-                scores=approach_scores,
-            )
-            is_contrast_lesson = self.selector.is_contrast_lesson(
-                example_count=example_count,
-                selection_index=selection_index,
-                scores=approach_scores,
+    async def _maybe_add_supplemental_lesson_item(
+        self,
+        *,
+        items: List[LessonItemResponse],
+        query_points: List[dict],
+        user_id: str,
+        session_id: str,
+        user_filter: Dict[str, str],
+    ) -> List[LessonItemResponse]:
+        """Add one practice item from priority MTs not covered by this submit (throttled)."""
+        current_mts = {
+            str(p.get("payload", {}).get("mistake_type", "") or "") for p in query_points
+        }
+        current_mts.discard("")
+
+        async with self.session_factory() as session:
+            if not await repo.should_offer_supplemental_practice(
+                session,
+                user_id,
+                exclude_mistake_types=current_mts,
+                every_n_submits=self.supplemental_every_n_submits,
+            ):
+                return items
+            priority_mts = await repo.top_priority_mistake_types(
+                session, user_id, k=5
             )
 
-            item_context = self._retrieve_staged_context(
-                list(context_vec),
-                user_filter,
-                [payload],
+        for mt in priority_mts:
+            if mt in current_mts:
+                continue
+            points = self.qdrant.scroll_by_mistake_type(
+                collection_name="mistake_examples",
+                user_id=user_id,
+                mistake_type=mt,
+                limit=1,
             )
-            if approach_type == "example_based":
-                item_context.similar_past_examples = self._retrieve_similar_examples(
-                    query_embedding=list(context_vec),
-                    user_id=user_id,
-                    mistake_type=mistake_type,
-                    exclude_mistake_id=str(payload.get("mistake_id", "") or "") or None,
-                )
-
-            lesson = self._construct_lesson(item_context, approach_type)
-            artifact_id = await self._persist_lesson_artifact(
-                lesson=lesson,
+            if not points:
+                continue
+            point = points[0]
+            vec = point.get("vectors", {}).get("context")
+            if not vec or len(vec) != 384:
+                continue
+            item = await self._generate_lesson_item_from_point(
+                point=point,
                 user_id=user_id,
                 session_id=session_id,
-                context=item_context,
-                query_embedding=list(context_vec),
-                selection_index=selection_index,
-                is_contrast_lesson=is_contrast_lesson,
-                example_count_at_generation=example_count,
+                user_filter=user_filter,
             )
-            items.append(
-                LessonItemResponse(
-                    lesson_artifact_id=artifact_id,
-                    target=self._payload_to_lesson_target(payload),
-                    lesson=LessonContent(
-                        topic=lesson.topic,
-                        explanation=lesson.explanation,
-                        exercises=lesson.exercises,
-                    ),
-                )
-            )
+            if item is not None:
+                return items + [item]
         return items
+
+    async def _generate_lesson_item_from_point(
+        self,
+        *,
+        point: dict,
+        user_id: str,
+        session_id: str,
+        user_filter: Dict[str, str],
+    ) -> Optional[LessonItemResponse]:
+        context_vec = point.get("vectors", {}).get("context")
+        payload = point.get("payload", {})
+        if not context_vec or len(context_vec) != 384 or not payload:
+            return None
+
+        mistake_type = str(payload.get("mistake_type", "") or "")
+        async with self.session_factory() as session:
+            example_count = await repo.count_examples_by_mistake_type(
+                session, user_id, mistake_type
+            )
+            selection_index = await repo.count_lessons_by_mistake_type(
+                session, user_id, mistake_type
+            )
+            approach_scores = await repo.approach_effectiveness_scores_by_mistake_type(
+                session,
+                user_id,
+                mistake_type,
+                self.selector.approaches,
+                comparison_min_example_count=self.selector.COMPARISON_MIN_EXAMPLE_COUNT,
+            )
+        approach_type = self.selector.select(
+            example_count=example_count,
+            selection_index=selection_index,
+            scores=approach_scores,
+        )
+        is_contrast_lesson = self.selector.is_contrast_lesson(
+            example_count=example_count,
+            selection_index=selection_index,
+            scores=approach_scores,
+        )
+
+        item_context = self._retrieve_staged_context(
+            list(context_vec),
+            user_filter,
+            [payload],
+        )
+        if approach_type == "example_based":
+            item_context.similar_past_examples = self._retrieve_similar_examples(
+                query_embedding=list(context_vec),
+                user_id=user_id,
+                mistake_type=mistake_type,
+                exclude_mistake_id=str(payload.get("mistake_id", "") or "") or None,
+            )
+
+        lesson = self._construct_lesson(item_context, approach_type)
+        artifact_id = await self._persist_lesson_artifact(
+            lesson=lesson,
+            user_id=user_id,
+            session_id=session_id,
+            context=item_context,
+            query_embedding=list(context_vec),
+            selection_index=selection_index,
+            is_contrast_lesson=is_contrast_lesson,
+            example_count_at_generation=example_count,
+        )
+        return LessonItemResponse(
+            lesson_artifact_id=artifact_id,
+            target=self._payload_to_lesson_target(payload),
+            lesson=LessonContent(
+                topic=lesson.topic,
+                explanation=lesson.explanation,
+                exercises=lesson.exercises,
+            ),
+        )
 
     @staticmethod
     def _mistake_type_to_description(mistake_type: str) -> str:
@@ -970,7 +1047,6 @@ class RAGService:
         Convert mistake_type to human-readable description.
         For V1, uses simple formatting. V2 can add taxonomy labels.
         """
-    
         return mistake_type.replace("_", " ").replace(".", " ").title()
 
     def _retrieve_learning_summaries(

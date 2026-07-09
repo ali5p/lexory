@@ -567,3 +567,20 @@ async def top_priority_mistake_types(
     )
     r = await session.execute(stmt)
     return [str(row[0]) for row in r.all() if row[0]]
+
+
+async def should_offer_supplemental_practice(
+    session: AsyncSession,
+    user_id: str,
+    exclude_mistake_types: set[str],
+    *,
+    every_n_submits: int,
+) -> bool:
+    """True on every Nth submit when a priority MT is not in this submit."""
+    timeline = await get_user_activity_timeline(session, user_id)
+    submit_count = sum(1 for activity in timeline if activity.kind == "submit")
+    if submit_count < 1 or submit_count % every_n_submits != 0:
+        return False
+    priority = await top_priority_mistake_types(session, user_id, k=10)
+    excluded = exclude_mistake_types or set()
+    return any(mt not in excluded for mt in priority)
