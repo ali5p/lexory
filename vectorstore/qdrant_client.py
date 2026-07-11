@@ -1,7 +1,7 @@
 import logging
 import time
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional, cast
 
 from qdrant_client import QdrantClient
 from qdrant_client.local.qdrant_local import QdrantLocal
@@ -13,6 +13,7 @@ from qdrant_client.models import (
     FieldCondition,
     MatchValue,
     OrderBy,
+    PayloadSchemaType,
     PointStruct,
     VectorParams,
 )
@@ -43,6 +44,8 @@ def _collection_missing(exc: BaseException) -> bool:
 
 
 class QdrantStore:
+    client: QdrantClient | QdrantLocal
+
     def __init__(self, path: str = "./qdrant_storage", url: str | None = None):
         self.path = Path(path)
         self.path.mkdir(exist_ok=True)
@@ -104,16 +107,15 @@ class QdrantStore:
         self, collection_name: str, named_vectors: Dict[str, tuple[int, Distance]]
     ):
         """Create collection with named vectors if missing."""
+        vectors_config: dict[str, VectorParams] = {
+            name: VectorParams(size=size, distance=distance)
+            for name, (size, distance) in named_vectors.items()
+        }
         try:
             self.client.get_collection(collection_name)
         except UnexpectedResponse as e:
             if not _collection_missing(e):
                 raise
-            # qdrant-client 1.9+ accepts dict directly for named vectors
-            vectors_config = {
-                name: VectorParams(size=size, distance=distance)
-                for name, (size, distance) in named_vectors.items()
-            }
             self.client.create_collection(
                 collection_name=collection_name,
                 vectors_config=vectors_config,
@@ -121,10 +123,6 @@ class QdrantStore:
         except (ValueError, RuntimeError) as e:
             if not _collection_missing(e):
                 raise
-            vectors_config = {
-                name: VectorParams(size=size, distance=distance)
-                for name, (size, distance) in named_vectors.items()
-            }
             self.client.create_collection(
                 collection_name=collection_name,
                 vectors_config=vectors_config,
@@ -151,7 +149,7 @@ class QdrantStore:
             self.client.create_payload_index(
                 collection_name=collection_name,
                 field_name="detected_at",
-                field_schema="datetime",
+                field_schema=PayloadSchemaType.DATETIME,
             )
         except UnexpectedResponse as e:
             if "already exists" in str(e).lower():
@@ -167,7 +165,7 @@ class QdrantStore:
             self.client.create_payload_index(
                 collection_name=collection_name,
                 field_name="user_id",
-                field_schema="keyword",
+                field_schema=PayloadSchemaType.KEYWORD,
             )
         except UnexpectedResponse as e:
             if "already exists" in str(e).lower():
@@ -177,30 +175,33 @@ class QdrantStore:
     
     def upsert(self, collection_name: str, points: list[dict]):
         """Upsert points, supporting both single vector and named vectors."""
-        points_struct = []
+        points_struct: list[PointStruct] = []
         for point in points:
             point_id = point["id"]
             payload = point.get("payload", {})
-            
-            # Check for named vectors (new format)
+
             if "vectors" in point or "named_vectors" in point:
-                vectors_dict = point.get("vectors") or point.get("named_vectors", {})
-                # qdrant-client 1.9+ accepts dict directly for named vectors
-                points_struct.append(
-                    PointStruct(id=point_id, vector=vectors_dict, payload=payload)
-                )
-            # Legacy single vector format
-            elif "vector" in point:
+                vectors_raw = point.get("vectors") or point.get("named_vectors", {})
+                vectors_dict = cast(dict[str, list[float]], vectors_raw)
                 points_struct.append(
                     PointStruct(
                         id=point_id,
-                        vector=point["vector"],
+                        vector=cast(Any, vectors_dict),
+                        payload=payload,
+                    )
+                )
+            elif "vector" in point:
+                vector = cast(list[float], point["vector"])
+                points_struct.append(
+                    PointStruct(
+                        id=point_id,
+                        vector=vector,
                         payload=payload,
                     )
                 )
             else:
                 raise ValueError(f"Point {point_id} must have 'vector' or 'vectors' field")
-        
+
         self.client.upsert(collection_name=collection_name, points=points_struct)
 
     def search(
@@ -223,11 +224,18 @@ class QdrantStore:
             if conditions:
                 query_filter = Filter(must=conditions)
 
-        # Prefer query_points (remote QdrantClient); fallback to search (QdrantLocal)
+        # Remote QdrantClient uses query_points; local QdrantLocal uses search.
         if named_query:
             vector_name = named_query["vector_name"]
-            query_vector = named_query["vector"]
-            if hasattr(self.client, "query_points"):
+            query_vector = cast(list[float], named_query["vector"])
+            if isinstance(self.client, QdrantLocal):
+                results = self.client.search(
+                    collection_name=collection_name,
+                    query_vector=(vector_name, query_vector),
+                    limit=limit,
+                    query_filter=query_filter,
+                )
+            else:
                 resp = self.client.query_points(
                     collection_name=collection_name,
                     query=query_vector,
@@ -235,39 +243,31 @@ class QdrantStore:
                     limit=limit,
                     query_filter=query_filter,
                 )
-                results = resp.points if hasattr(resp, "points") else []
-            else:
-                query_vec = (vector_name, query_vector)
-                results = self.client.search(
-                    collection_name=collection_name,
-                    query_vector=query_vec,
-                    limit=limit,
-                    query_filter=query_filter,
-                )
+                results = resp.points
         elif vector is not None:
-            if hasattr(self.client, "query_points"):
-                resp = self.client.query_points(
-                    collection_name=collection_name,
-                    query=vector,
-                    limit=limit,
-                    query_filter=query_filter,
-                )
-                results = resp.points if hasattr(resp, "points") else []
-            else:
+            if isinstance(self.client, QdrantLocal):
                 results = self.client.search(
                     collection_name=collection_name,
                     query_vector=vector,
                     limit=limit,
                     query_filter=query_filter,
                 )
+            else:
+                resp = self.client.query_points(
+                    collection_name=collection_name,
+                    query=vector,
+                    limit=limit,
+                    query_filter=query_filter,
+                )
+                results = resp.points
         else:
             raise ValueError("Must provide either 'vector' or 'named_query'")
 
         return [
             {
-                "id": getattr(r, "id", r.get("id") if isinstance(r, dict) else None),
-                "score": getattr(r, "score", r.get("score", 0.0) if isinstance(r, dict) else 0.0),
-                "payload": getattr(r, "payload", r.get("payload", {}) if isinstance(r, dict) else {}),
+                "id": r.id,
+                "score": r.score,
+                "payload": r.payload or {},
             }
             for r in results
         ]
@@ -317,8 +317,9 @@ class QdrantStore:
         out = []
         for rec in records:
             vec = None
-            if isinstance(getattr(rec, "vector", None), dict):
-                vec = rec.vector.get("context")
+            rec_vector = getattr(rec, "vector", None)
+            if isinstance(rec_vector, dict):
+                vec = rec_vector.get("context")
             out.append({
                 "id": rec.id,
                 "payload": rec.payload or {},
@@ -378,8 +379,9 @@ class QdrantStore:
         out = []
         for rec in records:
             vec = None
-            if isinstance(getattr(rec, "vector", None), dict):
-                vec = rec.vector.get("context")
+            rec_vector = getattr(rec, "vector", None)
+            if isinstance(rec_vector, dict):
+                vec = rec_vector.get("context")
             out.append(
                 {
                     "id": rec.id,
