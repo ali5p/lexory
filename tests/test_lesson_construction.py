@@ -60,7 +60,6 @@ def test_construct_lesson_returns_valid_structure(rag_service: RAGService) -> No
         detected_mistake_examples=[
             DetectedMistakeExample(mistake_type="SUBJECT_VERB_AGREEMENT")
         ],
-        long_term_dynamics=[],
     )
 
     lesson = rag_service._construct_lesson(context, "rule_based")
@@ -74,7 +73,6 @@ def test_construct_lesson_returns_valid_structure(rag_service: RAGService) -> No
     # Empty context must not crash (structural contract)
     empty_context = ContextAssembly(
         detected_mistake_examples=[],
-        long_term_dynamics=[],
     )
     empty_lesson = rag_service._construct_lesson(empty_context, "rule_based")
     assert empty_lesson.topic is not None
@@ -93,7 +91,6 @@ def test_construct_lesson_example_based_records_selected_approach(
                 rule_message="Singular subject needs -s.",
             )
         ],
-        long_term_dynamics=[],
         similar_past_examples=[
             {"text": "He walk to school.", "rule_message": "x"},
             {"text": "She play tennis.", "rule_message": "y"},

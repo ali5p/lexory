@@ -6,8 +6,8 @@ import asyncio
 import logging
 import sys
 
-from storage.database import build_engine, build_session_factory
 from storage import repositories as repo
+from storage.database import build_engine, build_session_factory
 
 _log = logging.getLogger(__name__)
 
@@ -31,5 +31,7 @@ def main(user_id: str) -> None:
 
 if __name__ == "__main__":
     if len(sys.argv) < 2 or not sys.argv[1].strip():
-        raise SystemExit("usage: python -m batch.mistake_type_stats USER_ID")
+        raise SystemExit(
+            "usage: python -m scripts.recompute_mistake_type_stats USER_ID"
+        )
     main(user_id=sys.argv[1].strip())

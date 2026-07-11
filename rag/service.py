@@ -881,13 +881,9 @@ class RAGService:
             for payload in primary_examples
             if payload
         ]
-        long_term_dynamics = self._retrieve_learning_summaries(
-            query_embedding, user_filter
-        )
 
         return ContextAssembly(
             detected_mistake_examples=detected_mistake_examples,
-            long_term_dynamics=long_term_dynamics,
         )
 
     async def _generate_atomic_lesson_items(
@@ -1048,45 +1044,6 @@ class RAGService:
         For V1, uses simple formatting. V2 can add taxonomy labels.
         """
         return mistake_type.replace("_", " ").replace(".", " ").title()
-
-    def _retrieve_learning_summaries(
-        self,
-        query_embedding: List[float],
-        user_filter: Dict[str, str],
-        limit: int = 5,
-    ) -> List[dict]:
-        """
-        Retrieve relevant LearningSummaries for ContextAssembly long_term_dynamics.
-        Uses learning_summary_embeddings (batch-generated summaries).
-        Consumed for approach switching / stats.
-        """
-        user_id = user_filter.get("user_id")
-        if not user_id:
-            return []
-
-        results = self.qdrant.search(
-            collection_name="learning_summary_embeddings",
-            vector=query_embedding,
-            limit=limit,
-            filters=self._user_filter(user_id),
-        )
-
-        summaries = []
-        for result in results:
-            if result["score"] < self.min_similarity_score:
-                continue
-            payload = result.get("payload", {})
-            summaries.append(
-                {
-                    "id": result["id"],
-                    "content": payload.get("content", ""),
-                    "window_type": payload.get("window_type", ""),
-                    "scope": payload.get("scope", ""),
-                    "similarity_score": result["score"],
-                }
-            )
-
-        return summaries
 
     async def _persist_lesson_artifact(
         self,

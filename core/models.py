@@ -18,13 +18,6 @@ class MistakeInstance(BaseModel):
     detected_at: datetime = Field(default_factory=datetime.now)
 
 
-class LearningSummary(BaseModel):
-    summary_id: str
-    user_id: str
-    content: str
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-
 class LessonArtifact(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -72,13 +65,6 @@ class ContextAssembly(BaseModel):
     """Internal context for lesson generation (not exposed on /submit)."""
 
     detected_mistake_examples: List[DetectedMistakeExample]
-    long_term_dynamics: List[Dict] = Field(
-        default_factory=list,
-        description=(
-            "Batch learning summaries retrieved at request time; reserved for "
-            "approach switching and future user-facing stats, not LLM prompts."
-        ),
-    )
     similar_past_examples: List[Dict] = Field(
         default_factory=list,
         description=(

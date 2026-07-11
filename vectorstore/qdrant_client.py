@@ -74,30 +74,6 @@ class QdrantStore:
         raise last
 
     def _ensure_collections(self):
-        # Standard single-vector collections (384-dim)
-        standard_collections = [
-            "learning_summary_embeddings",
-        ]
-        for collection_name in standard_collections:
-            try:
-                self.client.get_collection(collection_name)
-            except UnexpectedResponse as e:
-                if _collection_missing(e):
-                    self.client.create_collection(
-                        collection_name=collection_name,
-                        vectors_config=VectorParams(size=384, distance=Distance.COSINE),
-                    )
-                else:
-                    raise
-            except (ValueError, RuntimeError) as e:
-                if _collection_missing(e):
-                    self.client.create_collection(
-                        collection_name=collection_name,
-                        vectors_config=VectorParams(size=384, distance=Distance.COSINE),
-                    )
-                else:
-                    raise
-        
         # Named-vector collections
         self._ensure_named_collection(
             "mistake_examples",
@@ -122,7 +98,6 @@ class QdrantStore:
             },
         )
         self._ensure_user_id_index("mistake_occurrences")
-        self._ensure_user_id_index("learning_summary_embeddings")
         self._ensure_user_id_index("lesson_artifact_points")
     
     def _ensure_named_collection(

@@ -105,12 +105,10 @@ Once the system pipeline is stable, retrieval quality improvements are planned.
 
 # Known Issues / Tradeoffs
 
-### Batch jobs (not integrated in runtime yet)
+### Analytics (integrated at runtime)
 
-- **LearningSummaryBatch** (`batch/learning_summaries.py`) — occurrence-driven rolling summaries.
-- **Lesson artifact analytics** — planned batch module for explanation effectiveness. Online `/submit` persists artifacts but does not read them.
-
-Both are intended to feed long-term context at generation time once metrics are stable.
+- **`user_mistake_type_stats`** — activity-index priority stats; recomputed after each `/submit` and `/exercise-feedback`. Drives fallback lesson pick and optional supplemental practice.
+- **Lesson artifact analytics** — planned batch module for explanation effectiveness. Online `/submit` persists artifacts but does not read them for analytics yet.
 
 ---
 
@@ -196,9 +194,8 @@ flowchart TB
     I[_persist_lesson_artifact per item]
 
     J[Session candidates]
-    K[Fallback: PostgreSQL scores then Qdrant by mistake_type]
+    K[Fallback: priority stats then Qdrant by mistake_type]
     L[(mistake_examples)]
-    N[(learning_summary_embeddings)]
     O[(lesson_artifact_points — persist new lesson)]
 
     A --> B
