@@ -234,21 +234,25 @@ This starts:
 - **Qdrant** – Vector database at http://localhost:6333  
   - Data persisted in `./qdrant_storage`
 - **PostgreSQL** - Database at postgresql+asyncpg://lexory:lexory@localhost:5432/lexory
-- **Ollama** – LLM service for lesson generation (default mode)
 - **LanguageTool** – Grammar checking at http://localhost:8010 (no rate limits; allow ~30s for Java to start)
+
+**Cloud LLM:** set `LLM_PROVIDER=groq` and `GROQ_API_KEY` in `.env`, then `docker compose up --build`.
+
+**Local Ollama:** add `--profile local-llm`, then pull a model:
+
+```bash
+docker compose --profile local-llm up --build
+docker compose exec ollama ollama pull qwen2.5:1.5b-instruct
+```
+
+Default compose (without `local-llm` profile) does **not** start Ollama — use Groq or run Ollama with the profile above.
 
 **Optional / maintainer-only files:**
 - `assets/languagetool_rule_ids_en_all.json` – full list of rule ids found in upstream English rule XMLs for the LT version that last regenerated the mapping (not read at runtime).
 - `assets/languagetool_rule_inventory_manifest.json` – which `en` rules tree and `--lt-ref` were used.
-To **bump** the LanguageTool server version: pin the Docker image tag to the matching [LanguageTool release](https://github.com/languagetool-org/languagetool/tags), sparse-clone that tag’s `languagetool-language-modules/.../rules/en` under `vendor/lt-en-rules` (gitignored; see `.gitignore`), then run `scripts/extract_languagetool_rule_ids.py` with the same `--lt-ref` and `--bulk-fill-mapping` as needed, and commit the updated JSON assets. 
+To **bump** the LanguageTool server version: pin the Docker image tag to the matching [LanguageTool release](https://github.com/languagetool-org/languagetool/tags), sparse-clone that tag’s `languagetool-language-modules/.../rules/en` under `vendor/lt-en-rules` (gitignored; see `.gitignore`), then run `scripts/extract_languagetool_rule_ids.py` with the same `--lt-ref` and `--bulk-fill-mapping` as needed, and commit the updated JSON assets.
 
-After the first start, pull a model:
-
-```bash
-docker compose exec ollama ollama pull qwen2.5:1.5b-instruct
-```
-
-**Troubleshooting:** If the LLM fails with connection errors, pull the model and check the **ollama** logs. If Lexory cannot reach Qdrant on startup, use the bundled `docker-compose.yml` as-is (service URLs are fixed there). For **uvicorn on the host** with backends in Docker, use `.env` / `.env.example` with `http://localhost:…` on the published ports.
+**Troubleshooting:** If the LLM fails with connection errors, check `LLM_PROVIDER` and Groq/Ollama credentials. For Ollama, pull the model and check **ollama** logs (`--profile local-llm`). If Lexory cannot reach Qdrant on startup, use the bundled `docker-compose.yml` as-is (service URLs are fixed there). For **uvicorn on the host** with backends in Docker, use `.env` / `.env.example` with `http://localhost:…` on the published ports.
 
 ### Environment variables
 
@@ -256,6 +260,11 @@ With **`docker compose`**, the **lexory** service receives **`QDRANT_URL`**, **`
 
 | Variable | Lexory-in-Docker | Description |
 |----------|------------------|-------------|
+| `LLM_PROVIDER` | From `.env` / default `ollama` | `ollama` (local) or `groq` (cloud API) |
+| `GROQ_API_KEY` | From `.env` | Required when `LLM_PROVIDER=groq` |
+| `GROQ_MODEL` | From `.env` / default `llama-3.1-8b-instant` | Groq model id |
+| `GROQ_STRUCTURED_OUTPUT` | From `.env` / default `1` | Set `0` to skip `response_format: json_object` |
+| `GROQ_TIMEOUT` | From `.env` / default `120` | Groq request timeout in seconds |
 | `OLLAMA_MODEL` | From `.env` / default `qwen2.5:1.5b-instruct` | Ollama model name |
 | `OLLAMA_URL` | Fixed in `docker-compose.yml` | `http://ollama:11434/api/generate` (Lexory calls **`/api/chat`** for lessons; the host/port are taken from this URL) |
 | `OLLAMA_STRUCTURED_OUTPUT` | From `.env` / default `1` | Set `0` if your Ollama build rejects JSON-schema **`format`** on chat |

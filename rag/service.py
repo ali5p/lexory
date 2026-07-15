@@ -75,9 +75,9 @@ class RAGService:
         self.supplemental_every_n_submits = 2
         self.min_similarity_score = 0.5
         self.semantic_dedup_threshold = 0.9
-        from llm.ollama_adapter import OllamaAdapter
+        from llm.factory import build_llm
 
-        llm = OllamaAdapter()
+        llm = build_llm()
         self._approach_registry: Dict[str, BaseApproach] = {
             "rule_based": RuleBasedApproach(llm=llm),
             "example_based": ExampleBasedApproach(llm=llm),
