@@ -3,6 +3,8 @@ from typing import Optional, List, Dict
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from core.exercises import ExerciseAnswerRequest, ExerciseAnswerResponse, ExercisePayload
+
 
 class UserText(BaseModel):
     text: str
@@ -26,7 +28,6 @@ class LessonArtifact(BaseModel):
     session_id: Optional[str]
     topic: str = ""
     explanation: str = ""
-    exercises: List[str] = Field(default_factory=list)
     approach_type: str = ""
     mistake_type: str = ""
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -80,7 +81,6 @@ class LessonResponse(BaseModel):
 
     topic: str
     explanation: str
-    exercises: list[str]
     approach_type: str
 
 
@@ -89,7 +89,7 @@ class LessonContent(BaseModel):
 
     topic: str
     explanation: str
-    exercises: list[str]
+    exercises: list[ExercisePayload] = Field(default_factory=list)
 
 
 class LessonTarget(BaseModel):
@@ -125,9 +125,3 @@ class SubmitResponse(BaseModel):
 class QueryResponse(BaseModel):
     lesson: LessonResponse
     context: ContextAssembly
-
-
-class ExerciseAttempt(BaseModel):
-    text: str
-    user_id: str
-    lesson_artifact_id: str 

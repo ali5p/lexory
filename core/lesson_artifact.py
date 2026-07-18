@@ -25,7 +25,6 @@ class LessonArtifactRecord(BaseModel):
     mistake_context: str = ""
     topic: str = ""
     explanation: str = ""
-    exercises: list[str] = Field(default_factory=list)
     approach_type: str = ""
     selection_index: int = 0
     is_contrast_lesson: bool = False
@@ -59,7 +58,6 @@ class LessonArtifactRecord(BaseModel):
             mistake_context=mistake_context,
             topic=lesson.topic,
             explanation=lesson.explanation,
-            exercises=list(lesson.exercises),
             approach_type=lesson.approach_type,
             selection_index=selection_index,
             is_contrast_lesson=is_contrast_lesson,
@@ -75,7 +73,6 @@ class LessonArtifactRecord(BaseModel):
                 "session_id",
                 "topic",
                 "explanation",
-                "exercises",
                 "approach_type",
                 "mistake_type",
                 "selection_index",
@@ -86,4 +83,4 @@ class LessonArtifactRecord(BaseModel):
         )
 
     def qdrant_payload(self) -> dict:
-        return self.model_dump(exclude={"exercises"})
+        return self.model_dump()

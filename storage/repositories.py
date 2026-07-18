@@ -14,7 +14,9 @@ from core.mistake_type_stats import (
     ScoringEventRow,
     compute_mistake_type_stats,
 )
+from core.exercises import ExercisePayload, build_exercise_payload
 from storage.models import (
+    Exercise,
     ExerciseAttempt,
     LessonArtifact,
     MistakeOccurrence,
@@ -65,7 +67,6 @@ async def upsert_artifact(session: AsyncSession, data: dict) -> None:
         session_id=data.get("session_id", ""),
         topic=data.get("topic", ""),
         explanation=data.get("explanation", ""),
-        exercises=data.get("exercises", []),
         approach_type=data.get("approach_type", ""),
         mistake_type=data.get("mistake_type", ""),
         selection_index=int(data.get("selection_index", 0) or 0),
@@ -82,13 +83,63 @@ async def upsert_artifact(session: AsyncSession, data: dict) -> None:
 async def insert_exercise_attempt(session: AsyncSession, data: dict) -> None:
     row = ExerciseAttempt(
         exercise_attempt_id=data["exercise_attempt_id"],
+        exercise_id=data.get("exercise_id"),
         lesson_artifact_id=data["lesson_artifact_id"],
         user_id=data["user_id"],
+        user_answer=data.get("user_answer"),
+        is_correct=data.get("is_correct"),
         attempt_timestamp=data["attempt_timestamp"],
         origin_session_id=data.get("origin_session_id", ""),
     )
     session.add(row)
     await session.flush()
+
+
+async def insert_exercises(session: AsyncSession, rows: list[dict]) -> None:
+    for data in rows:
+        session.add(
+            Exercise(
+                exercise_id=data["exercise_id"],
+                artifact_id=data["artifact_id"],
+                sort_order=int(data.get("sort_order", 0) or 0),
+                type=data["type"],
+                mistake_type=data.get("mistake_type", ""),
+                source_sentence=data.get("source_sentence", ""),
+                payload=data["payload"],
+                answer_key=data["answer_key"],
+                created_at=data["created_at"],
+            )
+        )
+    await session.flush()
+
+
+async def list_exercises_by_artifact_id(
+    session: AsyncSession, artifact_id: str
+) -> list[ExercisePayload]:
+    stmt = (
+        select(Exercise)
+        .where(Exercise.artifact_id == artifact_id)
+        .order_by(Exercise.sort_order, Exercise.created_at)
+    )
+    r = await session.execute(stmt)
+    rows = r.scalars().all()
+    return [
+        build_exercise_payload(
+            exercise_id=row.exercise_id,
+            mistake_type=row.mistake_type or "",
+            source_sentence=row.source_sentence or "",
+            payload=row.payload,
+        )
+        for row in rows
+    ]
+
+
+async def get_exercise_by_id(
+    session: AsyncSession, exercise_id: str
+) -> Optional[Exercise]:
+    stmt = select(Exercise).where(Exercise.exercise_id == exercise_id)
+    r = await session.execute(stmt)
+    return r.scalar_one_or_none()
 
 
 async def get_lesson_artifact_by_id(

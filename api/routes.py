@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
-from core.models import SubmitRequest, SubmitResponse, ExerciseAttempt
+from core.exercises import ExerciseAnswerRequest, ExerciseAnswerResponse
+from core.models import SubmitRequest, SubmitResponse
 from rag.service import RAGService
 
 
@@ -23,9 +24,13 @@ async def submit_and_lesson(
     )
 
 
-@router.post("/exercise-feedback")
-async def submit_exercise(
-    request: ExerciseAttempt,
+@router.post("/exercises/{exercise_id}/answer", response_model=ExerciseAnswerResponse)
+async def submit_exercise_answer(
+    exercise_id: str,
+    request: ExerciseAnswerRequest,
     rag_service: RAGService = Depends(get_rag_service),
 ):
-    return await rag_service.process_exercise_attempt(request)
+    try:
+        return await rag_service.process_exercise_answer(exercise_id, request)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e

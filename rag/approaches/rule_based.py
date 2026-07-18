@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any, List, Optional
+from typing import TYPE_CHECKING, List, Mapping, Optional
 
 import requests
 
@@ -23,12 +23,8 @@ LESSON_RESPONSE_JSON_SCHEMA: dict = {
             "type": "string",
             "description": "Brief explanation suitable for a learner.",
         },
-        "exercise": {
-            "type": "string",
-            "description": "One short practice prompt similar to the user's mistake.",
-        },
     },
-    "required": ["topic", "lesson", "exercise"],
+    "required": ["topic", "lesson"],
 }
 
 _SYSTEM_LESSON_INSTRUCTIONS = """You are an English teacher who teaches deductively: state the grammar rule first, then show a short example. Produce ONE short grammar lesson as structured JSON only.
@@ -42,10 +38,9 @@ Steps:
 1. Identify the mistake using the category, rule message, and the sentence.
 2. Choose a clear grammar topic name.
 3. In the lesson, state the rule in plain language FIRST, then give one short correct example.
-4. Write one short exercise (similar style to the user's sentence).
-5. If the rule message is vague, infer the rule mainly from the sentence.
+4. If the rule message is vague, infer the rule mainly from the sentence.
 
-Respond with JSON only (no markdown, no preamble). Use exactly these keys: topic, lesson, exercise.
+Respond with JSON only (no markdown, no preamble). Use exactly these keys: topic, lesson.
 
 Examples of the required shape (follow closely):
 
@@ -54,13 +49,13 @@ Mistake category: articles
 Rule message: Did you mean "it's" (it is)?
 User sentence: Its a sunny day today.
 JSON:
-{"topic": "It's vs its", "lesson": "Use it's (with apostrophe) for it is or it has. Use its (no apostrophe) for possession, like his or hers.", "exercise": "Fill in: _____ (Its/It's) going to rain later."}
+{"topic": "It's vs its", "lesson": "Use it's (with apostrophe) for it is or it has. Use its (no apostrophe) for possession, like his or hers."}
 ---
 Mistake category: subject_verb_agreement
 Rule message: Use third-person singular verb with he/she/it.
 User sentence: He walk to school every day.
 JSON:
-{"topic": "Subject–verb agreement (he/she/it)", "lesson": "With he, she, or it, the present simple verb usually takes -s: he walks, she runs, it works.", "exercise": "Correct this: She study history on Tuesdays."}
+{"topic": "Subject–verb agreement (he/she/it)", "lesson": "With he, she, or it, the present simple verb usually takes -s: he walks, she runs, it works."}
 ---
 """
 
@@ -142,7 +137,7 @@ class RuleBasedApproach(BaseApproach):
     def _generate(self, system_prompt: str, user_message: str, topic: str) -> str:
         """Shared LLM call + JSON parse + error handling. Populates _last_llm_result."""
         self._last_llm_result = {}
-        messages = [
+        messages: list[Mapping[str, str]] = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ]
@@ -165,7 +160,7 @@ class RuleBasedApproach(BaseApproach):
         if not parsed:
             return self._fail("LLM generation failed: invalid JSON response")
 
-        required_keys = ("topic", "lesson", "exercise")
+        required_keys = ("topic", "lesson")
         if not all(k in parsed for k in required_keys):
             missing = [k for k in required_keys if k not in parsed]
             return self._fail(f"LLM generation failed: missing keys {missing}")
@@ -173,9 +168,6 @@ class RuleBasedApproach(BaseApproach):
         self._last_llm_result = {
             "topic": str(parsed.get("topic", "")).strip() or topic,
             "explanation": str(parsed.get("lesson", "")).strip(),
-            "exercises": [str(parsed.get("exercise", "")).strip()]
-            if parsed.get("exercise")
-            else [],
             "generation_status": "ok",
         }
         return self._last_llm_result["explanation"]
@@ -184,10 +176,6 @@ class RuleBasedApproach(BaseApproach):
         self._last_llm_result = {
             "topic": "error",
             "explanation": err_msg,
-            "exercises": [],
             "generation_status": "error",
         }
         return err_msg
-
-    def generate_exercises(self, primary_mistake_context: Optional[Any] = None) -> List[str]:
-        return self._last_llm_result.get("exercises", [])

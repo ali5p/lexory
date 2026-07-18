@@ -11,7 +11,6 @@ def test_lesson_artifact_record_sql_row_includes_selection_metadata():
         lesson=LessonResponse(
             topic="Articles",
             explanation="Use a before consonant sounds.",
-            exercises=["Fill in: ___ apple."],
             approach_type="rule_based",
         ),
         user_id="user-1",

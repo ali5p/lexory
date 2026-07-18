@@ -5,12 +5,12 @@ from typing import Any, Dict, List, Optional, Set
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from core.exercises import ExerciseAnswerRequest, ExerciseAnswerResponse, validate_exercise_answer
 from core.lesson_artifact import LessonArtifactRecord
 from core.models import (
     ContextAssembly,
     DetectedMistakeExample,
     DetectedMistakeItem,
-    ExerciseAttempt,
     LessonContent,
     LessonItemResponse,
     LessonResponse,
@@ -24,8 +24,10 @@ from rag.approaches.default import DefaultApproach
 from rag.approaches.example_based import ExampleBasedApproach
 from rag.approaches.rule_based import RuleBasedApproach
 from rag.embedder import Embedder
+from rag.exercise_generator import ExerciseGenerator
 from rag.mistake_exclusion import (
-    delta_for_exercise_missed_target,
+    delta_for_exercise_correct,
+    delta_for_exercise_wrong,
     delta_for_ingest_mistake_event,
     skip_example_for_qdrant,
 )
@@ -78,6 +80,7 @@ class RAGService:
         from llm.factory import build_llm
 
         llm = build_llm()
+        self._exercise_generator = ExerciseGenerator(llm=llm)
         self._approach_registry: Dict[str, BaseApproach] = {
             "rule_based": RuleBasedApproach(llm=llm),
             "example_based": ExampleBasedApproach(llm=llm),
@@ -528,91 +531,75 @@ class RAGService:
         return response
 
 
-    async def process_exercise_attempt(self, attempt: ExerciseAttempt) -> dict:
+    async def process_exercise_answer(
+        self,
+        exercise_id: str,
+        request: ExerciseAnswerRequest,
+    ) -> ExerciseAnswerResponse:
         exercise_attempt_id = str(uuid.uuid4())
         attempt_timestamp = datetime.now(timezone.utc)
 
-        try:
-            events = process_text(
-                text=attempt.text,
-                user_id=attempt.user_id,
-                user_text_id=exercise_attempt_id,
-                session_id=None,
-                detected_at=attempt_timestamp,
-                embedder=self.embedder,
-                source="exercise_attempt",
-                lt_tool=self.lt_tool,
+        async with self.session_factory() as session:
+            exercise = await repo.get_exercise_by_id(session, exercise_id)
+            if exercise is None:
+                raise ValueError("Exercise not found")
+
+            artifact = await repo.get_lesson_artifact_by_id(
+                session, exercise.artifact_id
             )
+            if artifact is None or artifact.user_id != request.user_id:
+                raise ValueError("Exercise not found")
 
-            tasks = []
-            async with self.session_factory() as session:
-                art = await repo.get_lesson_artifact_by_id(
-                    session, attempt.lesson_artifact_id
+            is_correct, explanation = validate_exercise_answer(
+                exercise.payload,
+                exercise.answer_key,
+                request,
+            )
+            mistake_type = exercise.mistake_type or artifact.mistake_type or ""
+            delta = (
+                delta_for_exercise_correct()
+                if is_correct
+                else delta_for_exercise_wrong()
+            )
+            if mistake_type:
+                await repo.insert_user_scoring_event(
+                    session,
+                    {
+                        "user_id": request.user_id,
+                        "rule_id": None,
+                        "mistake_type": mistake_type,
+                        "mistake_id": None,
+                        "session_or_exercise_id": exercise_attempt_id,
+                        "occurred_at": attempt_timestamp.isoformat(),
+                        "delta": delta,
+                    },
                 )
-                if art is None:
-                    _missing_artifacts.error("Lesson artifact with targeted mistake_type is missing")
-                targets: Set[str] = (
-                    {art.mistake_type} if art and art.mistake_type else set()
-                )
-                detected: Set[str] = (
-                    {e.get("mistake_type", "") for e in events} if events else set()
-                )
 
-                if events:
-                    for event in events:
-                        tasks.append({
-                            "mistake_id": event.get("mistake_id"),
-                            "is_correct": False,
-                            "mistake_type": event.get("mistake_type"),
-                            "rule_message": event.get("rule_message", ""),
-                        })
-                        _, occurrence_point = await self._ingest_mistake_event(
-                            session=session,
-                            event=event,
-                            user_text_id=exercise_attempt_id,
-                            lesson_artifact_id=attempt.lesson_artifact_id,
-                        )
-                        if occurrence_point:
-                            self.qdrant.upsert("mistake_occurrences", [occurrence_point])
-                else:
-                    tasks.append({"mistake_id": None, "is_correct": True})
-
-                for mt in targets - detected:
-                    await repo.insert_user_scoring_event(
-                        session,
-                        {
-                            "user_id": attempt.user_id,
-                            "rule_id": None,
-                            "mistake_type": mt,
-                            "mistake_id": None,
-                            "session_or_exercise_id": exercise_attempt_id,
-                            "occurred_at": attempt_timestamp.isoformat(),
-                            "delta": delta_for_exercise_missed_target(),
-                        },
-                    )
-
-                await repo.insert_exercise_attempt(session, {
+            user_answer = request.model_dump(
+                exclude={"user_id"},
+                exclude_none=True,
+            )
+            await repo.insert_exercise_attempt(
+                session,
+                {
                     "exercise_attempt_id": exercise_attempt_id,
-                    "lesson_artifact_id": attempt.lesson_artifact_id,
-                    "user_id": attempt.user_id,
+                    "exercise_id": exercise_id,
+                    "lesson_artifact_id": exercise.artifact_id,
+                    "user_id": request.user_id,
+                    "user_answer": user_answer,
+                    "is_correct": is_correct,
                     "attempt_timestamp": attempt_timestamp.isoformat(),
-                    "origin_session_id": art.session_id if art else "",
-                })
+                    "origin_session_id": artifact.session_id or "",
+                },
+            )
+            await session.commit()
 
-                await session.commit()
-
-            await self._refresh_user_mistake_type_stats(attempt.user_id)
-
-            return {
-                "exercise_attempt_id": exercise_attempt_id,
-                "lesson_artifact_id": attempt.lesson_artifact_id,
-                "attempt_timestamp": attempt_timestamp.isoformat(),
-                "tasks": tasks,
-            }
-        except ImportError:
-            raise RuntimeError(
-                "LanguageTool is unavailable. Check your internet connection or try again later."
-            ) from None
+        await self._refresh_user_mistake_type_stats(request.user_id)
+        return ExerciseAnswerResponse(
+            correct=is_correct,
+            explanation=explanation,
+            exercise_attempt_id=exercise_attempt_id,
+        )
 
     @staticmethod
     def _exercise_feedback_from_event(event: dict) -> str:
@@ -1027,13 +1014,18 @@ class RAGService:
             is_contrast_lesson=is_contrast_lesson,
             example_count_at_generation=example_count,
         )
+        exercises = await self._generate_and_persist_exercises(
+            artifact_id=artifact_id,
+            context=item_context,
+            lesson=lesson,
+        )
         return LessonItemResponse(
             lesson_artifact_id=artifact_id,
             target=self._payload_to_lesson_target(payload),
             lesson=LessonContent(
                 topic=lesson.topic,
                 explanation=lesson.explanation,
-                exercises=lesson.exercises,
+                exercises=exercises,
             ),
         )
 
@@ -1096,6 +1088,68 @@ class RAGService:
         )
         return artifact_id
 
+    async def _generate_and_persist_exercises(
+        self,
+        *,
+        artifact_id: str,
+        context: ContextAssembly,
+        lesson: LessonResponse,
+    ):
+        from core.exercises import ExercisePayload, build_exercise_payload
+
+        if lesson.topic == "error" or not lesson.explanation.strip():
+            return []
+
+        pairs = self._exercise_generator.generate(
+            context,
+            topic=lesson.topic,
+            explanation=lesson.explanation,
+        )
+        if not pairs:
+            return []
+
+        primary = (
+            context.detected_mistake_examples[0]
+            if context.detected_mistake_examples
+            else None
+        )
+        mistake_type = primary.mistake_type if primary else ""
+        source_sentence = (
+            (primary.examples[0] if primary and primary.examples else "") or ""
+        )
+        created_at = datetime.now(timezone.utc).isoformat()
+        rows: list[dict] = []
+        payloads: list[ExercisePayload] = []
+
+        for sort_order, (payload, answer_key) in enumerate(pairs):
+            exercise_id = str(uuid.uuid4())
+            rows.append(
+                {
+                    "exercise_id": exercise_id,
+                    "artifact_id": artifact_id,
+                    "sort_order": sort_order,
+                    "type": payload["type"],
+                    "mistake_type": mistake_type,
+                    "source_sentence": source_sentence,
+                    "payload": payload,
+                    "answer_key": answer_key,
+                    "created_at": created_at,
+                }
+            )
+            payloads.append(
+                build_exercise_payload(
+                    exercise_id=exercise_id,
+                    mistake_type=mistake_type,
+                    source_sentence=source_sentence,
+                    payload=payload,
+                )
+            )
+
+        async with self.session_factory() as session:
+            await repo.insert_exercises(session, rows)
+            await session.commit()
+
+        return payloads
 
     @staticmethod
     def _artifact_embedding_text(lesson: LessonResponse) -> str:
@@ -1113,7 +1167,6 @@ class RAGService:
         topic = self._extract_topic(primary_mistake_context)
         handler = self._get_approach_handler(approach_type)
         explanation = handler.build_explanation(context, topic)
-        exercises = handler.generate_exercises(primary_mistake_context)
 
         # Use the LLM's chosen topic when available. The stored approach_type is the
         # selected teaching approach (rule_based/example_based) so downstream scoring
@@ -1126,7 +1179,6 @@ class RAGService:
         return LessonResponse(
             topic=topic,
             explanation=explanation,
-            exercises=exercises,
             approach_type=approach_type,
         )
 

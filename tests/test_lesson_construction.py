@@ -8,14 +8,23 @@ from rag.embedder import Embedder
 from vectorstore.qdrant_client import QdrantStore
 
 
-class _FakeLLM:
+class _FakeLessonLLM:
     """Returns a fixed, schema-valid lesson JSON. No network."""
 
     def chat(self, messages, *, temperature: float = 0.0, json_schema=None) -> str:
+        system = messages[0]["content"] if messages else ""
+        if "drill writer" in system.lower():
+            return (
+                '{"exercises": ['
+                '{"type": "multiple_choice", "question": "She ___ to school.", '
+                '"options": ["walks", "walk", "walking"], "correct_answer": "walks"},'
+                '{"type": "fill_blank", "sentence": "He ___ tennis on weekends.", '
+                '"answer": "plays", "hint": "present simple -s"}'
+                "]}"
+            )
         return (
             '{"topic": "Subject-verb agreement", '
-            '"lesson": "Use the -s form with he/she/it.", '
-            '"exercise": "Correct: She walk to school."}'
+            '"lesson": "Use the -s form with he/she/it."}'
         )
 
 
@@ -36,10 +45,13 @@ def mock_embedder():
 
 @pytest.fixture
 def mock_session_factory():
-    factory = Mock()
+    session = AsyncMock()
+    session.commit = AsyncMock()
+    session.flush = AsyncMock()
     ctx = AsyncMock()
-    ctx.__aenter__ = AsyncMock(return_value=AsyncMock())
+    ctx.__aenter__ = AsyncMock(return_value=session)
     ctx.__aexit__ = AsyncMock(return_value=False)
+    factory = Mock()
     factory.return_value = ctx
     return factory
 
@@ -47,8 +59,8 @@ def mock_session_factory():
 @pytest.fixture
 def rag_service(mock_qdrant, mock_embedder, mock_session_factory):
     service = RAGService(mock_qdrant, mock_embedder, mock_session_factory)
-    # Inject a deterministic LLM so tests never hit the network.
-    fake = _FakeLLM()
+    fake = _FakeLessonLLM()
+    service._exercise_generator.llm = fake
     for handler in service._approach_registry.values():
         handler.llm = fake
     return service
@@ -66,23 +78,39 @@ def test_construct_lesson_returns_valid_structure(rag_service: RAGService) -> No
 
     assert lesson.topic == "Subject-verb agreement"
     assert lesson.explanation
-    assert lesson.exercises == ["Correct: She walk to school."]
-    # Stored approach_type is the selected teaching approach, not generation status.
     assert lesson.approach_type == "rule_based"
 
-    # Empty context must not crash (structural contract)
     empty_context = ContextAssembly(
         detected_mistake_examples=[],
     )
     empty_lesson = rag_service._construct_lesson(empty_context, "rule_based")
     assert empty_lesson.topic is not None
-    assert isinstance(empty_lesson.exercises, list)
+
+
+@pytest.mark.asyncio
+async def test_generate_and_persist_exercises(rag_service: RAGService) -> None:
+    context = ContextAssembly(
+        detected_mistake_examples=[
+            DetectedMistakeExample(
+                mistake_type="subject_verb_agreement",
+                examples=["She walk to school."],
+            )
+        ],
+    )
+    lesson = rag_service._construct_lesson(context, "rule_based")
+    exercises = await rag_service._generate_and_persist_exercises(
+        artifact_id="artifact-1",
+        context=context,
+        lesson=lesson,
+    )
+    assert len(exercises) == 2
+    assert exercises[0].payload.type == "multiple_choice"
+    assert exercises[1].payload.type == "fill_blank"
 
 
 def test_construct_lesson_example_based_records_selected_approach(
     rag_service: RAGService,
 ) -> None:
-    """example_based runs through the shared LLM path and stores its own approach_type."""
     context = ContextAssembly(
         detected_mistake_examples=[
             DetectedMistakeExample(
@@ -101,4 +129,3 @@ def test_construct_lesson_example_based_records_selected_approach(
 
     assert lesson.approach_type == "example_based"
     assert lesson.explanation
-    assert isinstance(lesson.exercises, list)

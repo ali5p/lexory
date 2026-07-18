@@ -1,6 +1,6 @@
 """Per-user activity timeline: submit sessions and exercise attempts in order.
 
-Each ``/submit`` is one submit activity (``session_id``). Each ``/exercise-feedback``
+Each ``/submit`` is one submit activity (``session_id``). Each ``POST /exercises/{id}/answer``
 call is one exercise activity (``exercise_attempt_id``). Activities are sorted by
 ``occurred_at`` and assigned a zero-based ``activity_index`` for session-window
 statistics (last N activities, not calendar time).

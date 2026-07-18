@@ -34,7 +34,6 @@ class LessonArtifact(Base):
     session_id: Mapped[str] = mapped_column(String)
     topic: Mapped[str] = mapped_column(String)
     explanation: Mapped[str] = mapped_column(Text)
-    exercises: Mapped[list] = mapped_column(JSONB, default=list)
     approach_type: Mapped[str] = mapped_column(String)
     mistake_type: Mapped[str] = mapped_column(String, index=True, default="")
     selection_index: Mapped[int] = mapped_column(Integer, default=0)
@@ -43,12 +42,29 @@ class LessonArtifact(Base):
     created_at: Mapped[str] = mapped_column(String, index=True)
 
 
+class Exercise(Base):
+    __tablename__ = "exercises"
+
+    exercise_id: Mapped[str] = mapped_column(String, primary_key=True)
+    artifact_id: Mapped[str] = mapped_column(String, index=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    type: Mapped[str] = mapped_column(String)
+    mistake_type: Mapped[str] = mapped_column(String, default="")
+    source_sentence: Mapped[str] = mapped_column(Text, default="")
+    payload: Mapped[dict] = mapped_column(JSONB)
+    answer_key: Mapped[dict] = mapped_column(JSONB)
+    created_at: Mapped[str] = mapped_column(String)
+
+
 class ExerciseAttempt(Base):
     __tablename__ = "exercise_attempts"
 
     exercise_attempt_id: Mapped[str] = mapped_column(String, primary_key=True)
+    exercise_id: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
     lesson_artifact_id: Mapped[str] = mapped_column(String, index=True)
     user_id: Mapped[str] = mapped_column(String, index=True)
+    user_answer: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    is_correct: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     attempt_timestamp: Mapped[str] = mapped_column(String, index=True)
     origin_session_id: Mapped[str] = mapped_column(String, default="")
 

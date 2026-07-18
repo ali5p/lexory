@@ -18,9 +18,8 @@ Teach inductively:
 1. Point out the pattern shared by the learner's sentences.
 2. For each wrong sentence, show its corrected version so the contrast is visible.
 3. Keep rule jargon minimal; let the corrected examples make the rule obvious.
-4. Write one short exercise in the style of the learner's sentences.
 
-Respond with JSON only (no markdown, no preamble). Use exactly these keys: topic, lesson, exercise.
+Respond with JSON only (no markdown, no preamble). Use exactly these keys: topic, lesson.
 
 Example of the required shape (follow closely):
 ---
@@ -30,7 +29,7 @@ Past sentences:
 - She play tennis on weekends.
 Current sentence: My brother live in Berlin.
 JSON:
-{"topic": "Subject-verb agreement (he/she/it)", "lesson": "Across your sentences the verb needs -s after a singular subject: 'He walk' becomes 'He walks', 'She play' becomes 'She plays', 'My brother live' becomes 'My brother lives'. With he, she, it, or one person, add -s to the present-simple verb.", "exercise": "Correct: My sister study medicine."}
+{"topic": "Subject-verb agreement (he/she/it)", "lesson": "Across your sentences the verb needs -s after a singular subject: 'He walk' becomes 'He walks', 'She play' becomes 'She plays', 'My brother live' becomes 'My brother lives'. With he, she, it, or one person, add -s to the present-simple verb."}
 ---
 """
 
