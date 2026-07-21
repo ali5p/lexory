@@ -4,8 +4,8 @@ import pytest
 
 from core.exercises import (
     ExerciseAnswerRequest,
-    GeneratedFillBlank,
     GeneratedMultipleChoice,
+    build_exercise_payload,
     parse_generated_exercises,
     split_generated_exercise,
     validate_exercise_answer,
@@ -138,3 +138,42 @@ def test_parse_generated_exercises_normalizes_mcq_case():
     )
     assert len(result) == 1
     assert result[0].correct_answer == "chose"
+
+
+def test_build_exercise_payload_includes_dev_answer_key(monkeypatch):
+    monkeypatch.setenv("LEXORY_EXPOSE_EXERCISE_ANSWERS", "1")
+    payload = build_exercise_payload(
+        exercise_id="ex-1",
+        mistake_type="sva",
+        source_sentence="She walk.",
+        payload={
+            "type": "multiple_choice",
+            "question": "She ___?",
+            "options": ["walks", "walk"],
+        },
+        answer_key={
+            "type": "multiple_choice",
+            "correct_option": "walks",
+        },
+    )
+    assert payload.dev_answer_key is not None
+    assert payload.dev_answer_key.correct_option == "walks"
+
+
+def test_build_exercise_payload_hides_dev_answer_key_by_default(monkeypatch):
+    monkeypatch.delenv("LEXORY_EXPOSE_EXERCISE_ANSWERS", raising=False)
+    payload = build_exercise_payload(
+        exercise_id="ex-1",
+        mistake_type="sva",
+        source_sentence="She walk.",
+        payload={
+            "type": "multiple_choice",
+            "question": "She ___?",
+            "options": ["walks", "walk"],
+        },
+        answer_key={
+            "type": "multiple_choice",
+            "correct_option": "walks",
+        },
+    )
+    assert payload.dev_answer_key is None

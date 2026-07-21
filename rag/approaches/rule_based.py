@@ -35,10 +35,11 @@ The user message will contain:
 - A user sentence that contains the mistake.
 
 Steps:
-1. Identify the mistake using the category, rule message, and the sentence.
-2. Choose a clear grammar topic name.
-3. In the lesson, state the rule in plain language FIRST, then give one short correct example.
-4. If the rule message is vague, infer the rule mainly from the sentence.
+1. The rule message identifies ONE specific error — the sentence may contain other errors; ignore them.
+2. Teach ONLY the error described in the rule message (not other mistakes in the same sentence).
+3. Choose a clear grammar topic name matching that specific error.
+4. In the lesson, state the rule in plain language FIRST, then give one short correct example.
+5. If the rule message is vague, infer the rule from the rule message first, not from unrelated words in the sentence.
 
 Respond with JSON only (no markdown, no preamble). Use exactly these keys: topic, lesson.
 
@@ -64,12 +65,15 @@ def _user_message(
     rule_message: str,
     example_sentence: str,
     mistake_type: str = "",
+    rule_id: str = "",
 ) -> str:
     category = mistake_type.strip() or "(none)"
+    focus = rule_id.strip() or "(none)"
     return (
         f"Mistake category:\n{category}\n\n"
+        f"Focus rule id (ONLY this error — ignore others in the sentence):\n{focus}\n\n"
         f"Rule message from grammar checker:\n{rule_message or '(none)'}\n\n"
-        f"User sentence with the mistake:\n{example_sentence or '(none)'}\n"
+        f"User sentence (may contain other errors — do not teach those):\n{example_sentence or '(none)'}\n"
     )
 
 
@@ -118,20 +122,21 @@ class RuleBasedApproach(BaseApproach):
         self._last_llm_result: dict = {}
 
     @staticmethod
-    def _primary_fields(context: ContextAssembly) -> tuple[str, str, str]:
-        """(rule_message, example_sentence, mistake_type) of the primary mistake."""
-        rule_message = example_sentence = mistake_type = ""
+    def _primary_fields(context: ContextAssembly) -> tuple[str, str, str, str]:
+        """(rule_message, example_sentence, mistake_type, rule_id) of the primary mistake."""
+        rule_message = example_sentence = mistake_type = rule_id = ""
         if context.detected_mistake_examples:
             p = context.detected_mistake_examples[0]
             rule_message = p.rule_message or ""
             mistake_type = p.mistake_type or ""
+            rule_id = p.rule_id or ""
             examples = p.examples
             example_sentence = (examples[0] if examples else "") or ""
-        return rule_message, example_sentence, mistake_type
+        return rule_message, example_sentence, mistake_type, rule_id
 
     def build_explanation(self, context: ContextAssembly, topic: str) -> str:
-        rule_message, example_sentence, mistake_type = self._primary_fields(context)
-        user_message = _user_message(rule_message, example_sentence, mistake_type)
+        rule_message, example_sentence, mistake_type, rule_id = self._primary_fields(context)
+        user_message = _user_message(rule_message, example_sentence, mistake_type, rule_id)
         return self._generate(self.SYSTEM_PROMPT, user_message, topic)
 
     def _generate(self, system_prompt: str, user_message: str, topic: str) -> str:

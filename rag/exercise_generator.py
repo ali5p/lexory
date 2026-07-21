@@ -7,8 +7,9 @@ from typing import TYPE_CHECKING, Any, List, Mapping
 
 import requests
 
+from core.exercise_rotation import ExerciseType
 from core.exercises import (
-    EXERCISES_RESPONSE_JSON_SCHEMA,
+    exercise_response_json_schema,
     extract_json_object,
     parse_generated_exercises,
     split_generated_exercise,
@@ -20,42 +21,50 @@ if TYPE_CHECKING:
 
 _log = logging.getLogger(__name__)
 
-_SYSTEM_EXERCISE_INSTRUCTIONS = """You are an English grammar drill writer. Produce 1–2 short practice exercises as structured JSON only.
+_MCQ_INSTRUCTIONS = """You are an English grammar drill writer. Produce exactly ONE multiple_choice exercise as structured JSON.
 
-The user message will contain:
-- A mistake category (Lexory taxonomy label).
-- A rule message from a grammar checker (hint).
-- The learner's sentence with the mistake.
-- The lesson topic and explanation already shown to the learner.
+The user message specifies the required exercise type and the learner sentence to base the drill on.
 
 Rules:
-1. Target ONLY the detected grammar mistake — do not invent unrelated errors.
-2. Use the learner's sentence style when possible.
-3. Prefer one multiple_choice and one fill_blank when two exercises fit; otherwise one exercise is fine.
-4. For multiple_choice: exactly one correct option; distractors must be plausible learner mistakes (include the wrong form from the source sentence when relevant). correct_answer must exactly match one option string.
-5. For fill_blank: the sentence MUST contain "___" where the learner fills the answer.
-6. Keep instructions short (under 12 words).
+1. Drill ONLY the error from the rule message — the sentence may contain other grammar mistakes; ignore them.
+2. Exactly one correct option; correct_answer must exactly match one option string.
+3. Distractors must be plausible learner mistakes.
+4. Keep instruction short (under 12 words).
 
-Respond with JSON only. Use exactly this shape:
-{"exercises": [ ... ]}
+Respond with JSON only:
+{"exercises": [ { "type": "multiple_choice", ... } ]}
+"""
 
-Example:
-{"exercises": [
-  {"type": "multiple_choice", "instruction": "Choose the correct form", "question": "She ___ to school every day.", "options": ["walks", "walk", "walking"], "correct_answer": "walks", "explanation_on_success": "Correct — third person -s.", "explanation_on_error": "Use walks with she."},
-  {"type": "fill_blank", "instruction": "Fill in the blank", "sentence": "He ___ tennis on weekends.", "answer": "plays", "hint": "present simple -s", "explanation_on_success": "Good!", "explanation_on_error": "Use plays with he."}
-]}
+_FB_INSTRUCTIONS = """You are an English grammar drill writer. Produce exactly ONE fill_blank exercise as structured JSON.
+
+The user message specifies the required exercise type and the learner sentence to base the drill on.
+
+Rules:
+1. Drill ONLY the error from the rule message — the sentence may contain other grammar mistakes; ignore them.
+2. The sentence MUST contain "___" where the learner fills the answer.
+3. Keep instruction short (under 12 words).
+
+Respond with JSON only:
+{"exercises": [ { "type": "fill_blank", ... } ]}
 """
 
 
-def _primary_fields(context: ContextAssembly) -> tuple[str, str, str]:
-    rule_message = example_sentence = mistake_type = ""
+def _system_prompt(exercise_type: ExerciseType) -> str:
+    if exercise_type == "fill_blank":
+        return _FB_INSTRUCTIONS
+    return _MCQ_INSTRUCTIONS
+
+
+def _primary_fields(context: ContextAssembly) -> tuple[str, str, str, str]:
+    rule_message = example_sentence = mistake_type = rule_id = ""
     if context.detected_mistake_examples:
         p = context.detected_mistake_examples[0]
         rule_message = p.rule_message or ""
         mistake_type = p.mistake_type or ""
+        rule_id = p.rule_id or ""
         examples = p.examples
         example_sentence = (examples[0] if examples else "") or ""
-    return rule_message, example_sentence, mistake_type
+    return rule_message, example_sentence, mistake_type, rule_id
 
 
 def _user_message(
@@ -63,15 +72,20 @@ def _user_message(
     rule_message: str,
     example_sentence: str,
     mistake_type: str,
+    rule_id: str,
     topic: str,
     explanation: str,
+    exercise_type: ExerciseType,
 ) -> str:
     return (
+        f"Required exercise type:\n{exercise_type}\n\n"
         f"Mistake category:\n{mistake_type.strip() or '(none)'}\n\n"
+        f"Focus rule id (ONLY drill this error — ignore others in the sentence):\n"
+        f"{rule_id.strip() or '(none)'}\n\n"
         f"Rule message from grammar checker:\n{rule_message or '(none)'}\n\n"
-        f"User sentence with the mistake:\n{example_sentence or '(none)'}\n\n"
         f"Lesson topic:\n{topic or '(none)'}\n\n"
-        f"Lesson explanation:\n{explanation or '(none)'}\n"
+        f"Lesson explanation:\n{explanation or '(none)'}\n\n"
+        f"Learner sentence (basis for this exercise):\n{example_sentence or '(none)'}\n"
     )
 
 
@@ -85,9 +99,10 @@ class ExerciseGenerator:
         *,
         topic: str,
         explanation: str,
+        exercise_type: ExerciseType,
     ) -> List[tuple[dict[str, Any], dict[str, Any]]]:
-        """Return list of (payload, answer_key) dict pairs ready for DB insert."""
-        rule_message, example_sentence, mistake_type = _primary_fields(context)
+        """Return zero or one (payload, answer_key) pair for DB insert."""
+        rule_message, example_sentence, mistake_type, rule_id = _primary_fields(context)
         if not mistake_type and not example_sentence:
             return []
 
@@ -95,11 +110,13 @@ class ExerciseGenerator:
             rule_message=rule_message,
             example_sentence=example_sentence,
             mistake_type=mistake_type,
+            rule_id=rule_id,
             topic=topic,
             explanation=explanation,
+            exercise_type=exercise_type,
         )
         messages: list[Mapping[str, str]] = [
-            {"role": "system", "content": _SYSTEM_EXERCISE_INSTRUCTIONS},
+            {"role": "system", "content": _system_prompt(exercise_type)},
             {"role": "user", "content": user_message},
         ]
 
@@ -107,7 +124,7 @@ class ExerciseGenerator:
             response_text = self.llm.chat(
                 messages,
                 temperature=0.0,
-                json_schema=EXERCISES_RESPONSE_JSON_SCHEMA,
+                json_schema=exercise_response_json_schema(exercise_type),
             )
         except requests.RequestException as e:
             _log.warning("Exercise LLM call failed: %s", e)
@@ -124,12 +141,16 @@ class ExerciseGenerator:
             )
             return []
 
-        generated = parse_generated_exercises(parsed["exercises"])
+        generated = parse_generated_exercises(
+            parsed["exercises"],
+            expected_type=exercise_type,
+        )
         if not generated:
             _log.warning(
-                "Exercise validation dropped all items from LLM output: %r",
+                "Exercise validation dropped output for type %s: %r",
+                exercise_type,
                 parsed.get("exercises"),
             )
             return []
 
-        return [split_generated_exercise(item) for item in generated]
+        return [split_generated_exercise(generated[0])]

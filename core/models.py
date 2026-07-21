@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Optional, List, Dict
+from typing import Optional, List
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -66,7 +66,7 @@ class ContextAssembly(BaseModel):
     """Internal context for lesson generation (not exposed on /submit)."""
 
     detected_mistake_examples: List[DetectedMistakeExample]
-    similar_past_examples: List[Dict] = Field(
+    similar_past_examples: list[dict[str, str]] = Field(
         default_factory=list,
         description=(
             "User's own prior sentences with the same mistake_type (text + "

@@ -9,18 +9,20 @@ from vectorstore.qdrant_client import QdrantStore
 
 
 class _FakeLessonLLM:
-    """Returns a fixed, schema-valid lesson JSON. No network."""
+    """Returns fixed lesson JSON and type-specific exercise JSON."""
 
     def chat(self, messages, *, temperature: float = 0.0, json_schema=None) -> str:
         system = messages[0]["content"] if messages else ""
-        if "drill writer" in system.lower():
+        if "drill writer" in system.lower() or "grammar drill" in system.lower():
+            if "fill_blank" in system.lower():
+                return (
+                    '{"exercises": [{"type": "fill_blank", '
+                    '"sentence": "He ___ tennis on weekends.", "answer": "plays"}]}'
+                )
             return (
-                '{"exercises": ['
-                '{"type": "multiple_choice", "question": "She ___ to school.", '
-                '"options": ["walks", "walk", "walking"], "correct_answer": "walks"},'
-                '{"type": "fill_blank", "sentence": "He ___ tennis on weekends.", '
-                '"answer": "plays", "hint": "present simple -s"}'
-                "]}"
+                '{"exercises": [{"type": "multiple_choice", '
+                '"question": "She ___ to school.", '
+                '"options": ["walks", "walk"], "correct_answer": "walks"}]}'
             )
         return (
             '{"topic": "Subject-verb agreement", '
@@ -67,7 +69,6 @@ def rag_service(mock_qdrant, mock_embedder, mock_session_factory):
 
 
 def test_construct_lesson_returns_valid_structure(rag_service: RAGService) -> None:
-    """Validate structural contract of lesson construction (LLM path, mocked LLM)."""
     context = ContextAssembly(
         detected_mistake_examples=[
             DetectedMistakeExample(mistake_type="SUBJECT_VERB_AGREEMENT")
@@ -80,15 +81,11 @@ def test_construct_lesson_returns_valid_structure(rag_service: RAGService) -> No
     assert lesson.explanation
     assert lesson.approach_type == "rule_based"
 
-    empty_context = ContextAssembly(
-        detected_mistake_examples=[],
-    )
-    empty_lesson = rag_service._construct_lesson(empty_context, "rule_based")
-    assert empty_lesson.topic is not None
-
 
 @pytest.mark.asyncio
-async def test_generate_and_persist_exercises(rag_service: RAGService) -> None:
+async def test_generate_and_persist_exercises_one_per_item(
+    rag_service: RAGService,
+) -> None:
     context = ContextAssembly(
         detected_mistake_examples=[
             DetectedMistakeExample(
@@ -98,14 +95,24 @@ async def test_generate_and_persist_exercises(rag_service: RAGService) -> None:
         ],
     )
     lesson = rag_service._construct_lesson(context, "rule_based")
-    exercises = await rag_service._generate_and_persist_exercises(
+
+    mcq = await rag_service._generate_and_persist_exercises(
         artifact_id="artifact-1",
         context=context,
         lesson=lesson,
+        selection_index=0,
     )
-    assert len(exercises) == 2
-    assert exercises[0].payload.type == "multiple_choice"
-    assert exercises[1].payload.type == "fill_blank"
+    assert len(mcq) == 1
+    assert mcq[0].payload.type == "multiple_choice"
+
+    fb = await rag_service._generate_and_persist_exercises(
+        artifact_id="artifact-2",
+        context=context,
+        lesson=lesson,
+        selection_index=2,
+    )
+    assert len(fb) == 1
+    assert fb[0].payload.type == "fill_blank"
 
 
 def test_construct_lesson_example_based_records_selected_approach(

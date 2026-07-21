@@ -3,10 +3,20 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import Annotated, Any, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, TypeAdapter, model_validator
+
+
+def expose_exercise_answers() -> bool:
+    """When true, /submit includes dev_answer_key (Swagger/local testing only)."""
+    return os.getenv("LEXORY_EXPOSE_EXERCISE_ANSWERS", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
 
 
 def _normalize_text(value: str) -> str:
@@ -36,15 +46,6 @@ ExercisePayloadBody = Annotated[
 ]
 
 
-class ExercisePayload(BaseModel):
-    """User-facing exercise object returned by /submit and exercise endpoints."""
-
-    exercise_id: str
-    mistake_type: str = ""
-    source_sentence: str = ""
-    payload: ExercisePayloadBody
-
-
 # --- Server-only answer keys ---
 
 
@@ -66,6 +67,23 @@ ExerciseAnswerKey = Annotated[
     Union[MultipleChoiceAnswerKey, FillBlankAnswerKey],
     Field(discriminator="type"),
 ]
+
+
+class ExercisePayload(BaseModel):
+    """User-facing exercise object returned by /submit and exercise endpoints."""
+
+    exercise_id: str
+    mistake_type: str = ""
+    source_sentence: str = ""
+    payload: ExercisePayloadBody
+    dev_answer_key: ExerciseAnswerKey | None = Field(
+        default=None,
+        description=(
+            "Present only when LEXORY_EXPOSE_EXERCISE_ANSWERS=1 "
+            "(local/Swagger testing; omitted in production UI)."
+        ),
+    )
+
 
 _answer_key_adapter: TypeAdapter[ExerciseAnswerKey] = TypeAdapter(ExerciseAnswerKey)
 _payload_body_adapter: TypeAdapter[ExercisePayloadBody] = TypeAdapter(ExercisePayloadBody)
@@ -139,7 +157,7 @@ EXERCISES_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
         "exercises": {
             "type": "array",
             "minItems": 1,
-            "maxItems": 3,
+            "maxItems": 1,
             "items": {
                 "oneOf": [
                     {
@@ -186,6 +204,28 @@ EXERCISES_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
 }
 
 
+def exercise_response_json_schema(exercise_type: str) -> dict[str, Any]:
+    """JSON schema for exactly one exercise of the requested type."""
+    items_schema = EXERCISES_RESPONSE_JSON_SCHEMA["properties"]["exercises"]["items"]
+    one_of = items_schema["oneOf"]
+    selected = next(
+        (branch for branch in one_of if branch["properties"]["type"]["const"] == exercise_type),
+        one_of[0],
+    )
+    return {
+        "type": "object",
+        "properties": {
+            "exercises": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 1,
+                "items": selected,
+            }
+        },
+        "required": ["exercises"],
+    }
+
+
 def _normalize_llm_exercise_item(item: Any) -> dict[str, Any] | None:
     """Fix common small-model mistakes before Pydantic validation."""
     if not isinstance(item, dict):
@@ -229,7 +269,11 @@ def _normalize_llm_exercise_item(item: Any) -> dict[str, Any] | None:
     return None
 
 
-def parse_generated_exercises(raw: Any) -> list[GeneratedExercise]:
+def parse_generated_exercises(
+    raw: Any,
+    *,
+    expected_type: str | None = None,
+) -> list[GeneratedExercise]:
     """Validate LLM exercise array; keeps valid items, drops broken ones."""
     if not isinstance(raw, list):
         raise ValueError("exercises must be a list")
@@ -237,6 +281,8 @@ def parse_generated_exercises(raw: Any) -> list[GeneratedExercise]:
     for item in raw:
         normalized = _normalize_llm_exercise_item(item)
         if normalized is None:
+            continue
+        if expected_type and normalized.get("type") != expected_type:
             continue
         try:
             out.append(_generated_adapter.validate_python(normalized))
@@ -284,13 +330,18 @@ def build_exercise_payload(
     mistake_type: str,
     source_sentence: str,
     payload: dict[str, Any],
+    answer_key: dict[str, Any] | None = None,
 ) -> ExercisePayload:
     body = _payload_body_adapter.validate_python(payload)
+    dev_key = None
+    if expose_exercise_answers() and answer_key:
+        dev_key = _answer_key_adapter.validate_python(answer_key)
     return ExercisePayload(
         exercise_id=exercise_id,
         mistake_type=mistake_type,
         source_sentence=source_sentence,
         payload=body,
+        dev_answer_key=dev_key,
     )
 
 

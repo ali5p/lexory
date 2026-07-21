@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from core.exercise_rotation import exercise_type_for_selection_index
 from core.exercises import ExerciseAnswerRequest, ExerciseAnswerResponse, validate_exercise_answer
 from core.lesson_artifact import LessonArtifactRecord
 from core.models import (
@@ -1018,6 +1019,7 @@ class RAGService:
             artifact_id=artifact_id,
             context=item_context,
             lesson=lesson,
+            selection_index=selection_index,
         )
         return LessonItemResponse(
             lesson_artifact_id=artifact_id,
@@ -1094,18 +1096,11 @@ class RAGService:
         artifact_id: str,
         context: ContextAssembly,
         lesson: LessonResponse,
+        selection_index: int = 0,
     ):
         from core.exercises import ExercisePayload, build_exercise_payload
 
         if lesson.topic == "error" or not lesson.explanation.strip():
-            return []
-
-        pairs = self._exercise_generator.generate(
-            context,
-            topic=lesson.topic,
-            explanation=lesson.explanation,
-        )
-        if not pairs:
             return []
 
         primary = (
@@ -1117,6 +1112,17 @@ class RAGService:
         source_sentence = (
             (primary.examples[0] if primary and primary.examples else "") or ""
         )
+
+        exercise_type = exercise_type_for_selection_index(selection_index)
+        pairs = self._exercise_generator.generate(
+            context,
+            topic=lesson.topic,
+            explanation=lesson.explanation,
+            exercise_type=exercise_type,
+        )
+        if not pairs:
+            return []
+
         created_at = datetime.now(timezone.utc).isoformat()
         rows: list[dict] = []
         payloads: list[ExercisePayload] = []
@@ -1142,6 +1148,7 @@ class RAGService:
                     mistake_type=mistake_type,
                     source_sentence=source_sentence,
                     payload=payload,
+                    answer_key=answer_key,
                 )
             )
 
