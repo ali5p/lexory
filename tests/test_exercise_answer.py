@@ -55,7 +55,7 @@ async def test_process_exercise_answer_correct_scores_negative(
         source_sentence="She walk.",
         payload={
             "type": "multiple_choice",
-            "question": "She ___ to school.",
+            "sentence": "She ___ to school.",
             "options": ["walks", "walk"],
         },
         answer_key={
@@ -110,7 +110,7 @@ async def test_process_exercise_answer_wrong_scores_plus_one(
         source_sentence="I ate apple.",
         payload={
             "type": "multiple_choice",
-            "question": "I ate ___ apple.",
+            "sentence": "I ate ___ apple.",
             "options": ["an", "a"],
         },
         answer_key={

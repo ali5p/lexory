@@ -15,7 +15,7 @@ from core.exercises import (
 def test_split_multiple_choice_hides_answer_key():
     generated = GeneratedMultipleChoice(
         type="multiple_choice",
-        question="She ___ to school.",
+        sentence="She ___ to school.",
         options=["goes", "go", "going"],
         correct_answer="goes",
         explanation_on_success="Good!",
@@ -30,7 +30,7 @@ def test_split_multiple_choice_hides_answer_key():
 def test_validate_multiple_choice_correct_and_wrong():
     payload = {
         "type": "multiple_choice",
-        "question": "He ___ tennis.",
+        "sentence": "He ___ tennis.",
         "options": ["plays", "play", "playing"],
     }
     answer_key = {
@@ -76,12 +76,68 @@ def test_validate_fill_blank_normalizes_case():
     assert ok is True
 
 
+def test_parse_generated_exercises_rejects_full_sentence_options():
+    result = parse_generated_exercises(
+        [
+            {
+                "type": "multiple_choice",
+                "sentence": "The weather today is ___ than it was yesterday.",
+                "options": [
+                    "The weather today is hotter than it was yesterday.",
+                    "The weather today is more hot than it was yesterday.",
+                ],
+                "correct_answer": "The weather today is hotter than it was yesterday.",
+            }
+        ]
+    )
+    assert result == []
+
+
+def test_parse_generated_exercises_rejects_mcq_without_blank():
+    result = parse_generated_exercises(
+        [
+            {
+                "type": "multiple_choice",
+                "sentence": "Choose the correct word.",
+                "options": ["hotter", "more hot"],
+                "correct_answer": "hotter",
+            }
+        ]
+    )
+    assert result == []
+
+
+def test_parse_generated_exercises_rejects_fill_blank_without_answer():
+    result = parse_generated_exercises(
+        [
+            {
+                "type": "fill_blank",
+                "sentence": "She ___ looking everywhere.",
+            }
+        ]
+    )
+    assert result == []
+
+
+def test_parse_generated_exercises_rejects_fill_blank_multiple_blanks():
+    result = parse_generated_exercises(
+        [
+            {
+                "type": "fill_blank",
+                "sentence": "He ___ know where her keys ___ so she looking everywhere.",
+                "answer": "is",
+            }
+        ]
+    )
+    assert result == []
+
+
 def test_parse_generated_exercises_rejects_bad_mcq():
     result = parse_generated_exercises(
         [
             {
                 "type": "multiple_choice",
-                "question": "Q?",
+                "sentence": "She ___?",
                 "options": ["a", "b"],
                 "correct_answer": "c",
             }
@@ -96,7 +152,7 @@ def test_parse_generated_exercises_keeps_valid_when_sibling_invalid():
         [
             {
                 "type": "multiple_choice",
-                "question": "She ___ to school.",
+                "sentence": "She ___ to school.",
                 "options": ["walks", "walk"],
                 "correct_answer": "walks",
             },
@@ -130,7 +186,7 @@ def test_parse_generated_exercises_normalizes_mcq_case():
         [
             {
                 "type": "multiple_choice",
-                "question": "Q?",
+                "sentence": "She ___?",
                 "options": ["chose", "chosen", "choosed"],
                 "correct_answer": "Chose",
             }
@@ -148,7 +204,7 @@ def test_build_exercise_payload_includes_dev_answer_key(monkeypatch):
         source_sentence="She walk.",
         payload={
             "type": "multiple_choice",
-            "question": "She ___?",
+            "sentence": "She ___?",
             "options": ["walks", "walk"],
         },
         answer_key={
@@ -168,7 +224,7 @@ def test_build_exercise_payload_hides_dev_answer_key_by_default(monkeypatch):
         source_sentence="She walk.",
         payload={
             "type": "multiple_choice",
-            "question": "She ___?",
+            "sentence": "She ___?",
             "options": ["walks", "walk"],
         },
         answer_key={

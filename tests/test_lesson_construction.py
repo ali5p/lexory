@@ -21,7 +21,7 @@ class _FakeLessonLLM:
                 )
             return (
                 '{"exercises": [{"type": "multiple_choice", '
-                '"question": "She ___ to school.", '
+                '"sentence": "She ___ to school.", '
                 '"options": ["walks", "walk"], "correct_answer": "walks"}]}'
             )
         return (

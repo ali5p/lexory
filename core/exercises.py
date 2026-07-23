@@ -23,13 +23,37 @@ def _normalize_text(value: str) -> str:
     return re.sub(r"\s+", " ", value.strip().lower())
 
 
+_MCQ_MAX_OPTION_WORDS = 6
+_MCQ_BLANK_MARKERS = ("___", "____")
+
+
+def _has_blank_marker(text: str) -> bool:
+    return any(marker in text for marker in _MCQ_BLANK_MARKERS)
+
+
+def _blank_marker_count(text: str) -> int:
+    """Count blank slots; treat ____ as one marker, not two ___."""
+    normalized = text.replace("____", "\0")
+    return normalized.count("___")
+
+
+def _mcq_option_looks_like_full_sentence(option: str) -> bool:
+    """Reject whole-sentence options; MCQ choices must be words or short phrases."""
+    text = option.strip()
+    if not text:
+        return True
+    if re.search(r"[.!?]", text):
+        return True
+    return len(text.split()) > _MCQ_MAX_OPTION_WORDS
+
+
 # --- Public payloads (API → frontend; no answer keys) ---
 
 
 class MultipleChoicePayload(BaseModel):
     type: Literal["multiple_choice"]
     instruction: str = ""
-    question: str
+    sentence: str
     options: list[str]
 
 
@@ -95,7 +119,7 @@ _payload_body_adapter: TypeAdapter[ExercisePayloadBody] = TypeAdapter(ExercisePa
 class GeneratedMultipleChoice(BaseModel):
     type: Literal["multiple_choice"]
     instruction: str = ""
-    question: str
+    sentence: str
     options: list[str]
     correct_answer: str
     explanation_on_success: str = ""
@@ -103,8 +127,14 @@ class GeneratedMultipleChoice(BaseModel):
 
     @model_validator(mode="after")
     def _validate_options(self) -> GeneratedMultipleChoice:
+        if not _has_blank_marker(self.sentence):
+            raise ValueError("multiple_choice sentence must contain a blank marker (___)")
+        if _blank_marker_count(self.sentence) != 1:
+            raise ValueError("multiple_choice sentence must contain exactly one blank")
         if len(self.options) < 2:
             raise ValueError("multiple_choice requires at least 2 options")
+        if any(_mcq_option_looks_like_full_sentence(option) for option in self.options):
+            raise ValueError("multiple_choice options must be words or short phrases")
         if self.correct_answer not in self.options:
             raise ValueError("correct_answer must be one of options")
         return self
@@ -121,8 +151,10 @@ class GeneratedFillBlank(BaseModel):
 
     @model_validator(mode="after")
     def _validate_blank(self) -> GeneratedFillBlank:
-        if "___" not in self.sentence and "____" not in self.sentence:
+        if not _has_blank_marker(self.sentence):
             raise ValueError("fill_blank sentence must contain a blank marker (___)")
+        if _blank_marker_count(self.sentence) != 1:
+            raise ValueError("fill_blank sentence must contain exactly one blank")
         if not self.answer.strip():
             raise ValueError("fill_blank answer must be non-empty")
         return self
@@ -165,7 +197,7 @@ EXERCISES_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
                         "properties": {
                             "type": {"const": "multiple_choice"},
                             "instruction": {"type": "string"},
-                            "question": {"type": "string"},
+                            "sentence": {"type": "string"},
                             "options": {
                                 "type": "array",
                                 "items": {"type": "string"},
@@ -178,7 +210,7 @@ EXERCISES_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
                         },
                         "required": [
                             "type",
-                            "question",
+                            "sentence",
                             "options",
                             "correct_answer",
                         ],
@@ -235,18 +267,27 @@ def _normalize_llm_exercise_item(item: Any) -> dict[str, Any] | None:
     if exercise_type == "multiple_choice":
         options = [str(o).strip() for o in item.get("options", []) if str(o).strip()]
         correct = str(item.get("correct_answer", "")).strip()
-        question = str(item.get("question", "")).strip()
-        if not options or not correct or not question:
+        sentence = str(item.get("sentence", "") or item.get("question", "")).strip()
+        if not options or not correct or not sentence:
+            return None
+        if not _has_blank_marker(sentence):
+            return None
+        if _blank_marker_count(sentence) != 1:
+            return None
+        if any(_mcq_option_looks_like_full_sentence(option) for option in options):
             return None
         matched = next((o for o in options if o.lower() == correct.lower()), None)
         if matched:
             correct = matched
         elif correct not in options:
-            options = (options + [correct])[:4]
+            if len(options) >= 4:
+                options = options[:3] + [correct]
+            else:
+                options = options + [correct]
         return {
             **item,
             "type": "multiple_choice",
-            "question": question,
+            "sentence": sentence,
             "options": options,
             "correct_answer": correct,
         }
@@ -256,7 +297,7 @@ def _normalize_llm_exercise_item(item: Any) -> dict[str, Any] | None:
         answer = str(item.get("answer", "")).strip()
         if not sentence or not answer:
             return None
-        if "___" not in sentence and "____" not in sentence:
+        if not _has_blank_marker(sentence):
             word_pattern = re.compile(rf"\b{re.escape(answer)}\b", re.IGNORECASE)
             if word_pattern.search(sentence):
                 sentence = word_pattern.sub("___", sentence, count=1)
@@ -264,6 +305,10 @@ def _normalize_llm_exercise_item(item: Any) -> dict[str, Any] | None:
                 loose = re.compile(re.escape(answer), re.IGNORECASE)
                 if loose.search(sentence):
                     sentence = loose.sub("___", sentence, count=1)
+        if not _has_blank_marker(sentence):
+            return None
+        if _blank_marker_count(sentence) != 1:
+            return None
         return {**item, "type": "fill_blank", "sentence": sentence, "answer": answer}
 
     return None
@@ -299,7 +344,7 @@ def split_generated_exercise(
         payload = MultipleChoicePayload(
             type="multiple_choice",
             instruction=generated.instruction,
-            question=generated.question,
+            sentence=generated.sentence,
             options=list(generated.options),
         )
         answer_key = MultipleChoiceAnswerKey(
