@@ -16,3 +16,7 @@ ollama/
 # (Docker/public API) or download releases from https://languagetool.org/ — see THIRD_PARTY_LICENSES.txt.
 vendor/languagetool/
 vendor/lt-en-rules/
+
+# Web frontend (Vite)
+web/node_modules/
+web/dist/

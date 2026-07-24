@@ -1,0 +1,174 @@
+.app {
+  width: min(720px, 100%);
+  margin: 0 auto;
+  padding: 2rem 1rem 3rem;
+}
+
+.app-header {
+  margin-bottom: 1.5rem;
+}
+
+.app-header h1 {
+  margin: 0 0 0.25rem;
+  font-size: 2rem;
+}
+
+.app-header p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.submit-form,
+.exercise {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.field {
+  display: grid;
+  gap: 0.35rem;
+  text-align: left;
+}
+
+.field span {
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+textarea,
+input[type="text"],
+select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 120px;
+}
+
+button {
+  justify-self: start;
+  padding: 0.55rem 1rem;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.results {
+  margin-top: 2rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.session-meta {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+.lesson-card {
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  text-align: left;
+}
+
+.lesson-card h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.125rem;
+}
+
+.lesson-target {
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.badge {
+  display: inline-block;
+  margin-right: 0.5rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.75rem;
+}
+
+.lesson-explanation {
+  margin: 0 0 0.75rem;
+  line-height: 1.5;
+}
+
+.source-sentence {
+  margin: 0 0 1rem;
+  padding: 0.75rem;
+  border-left: 3px solid var(--border);
+  color: var(--muted);
+}
+
+.exercise {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.exercise-type {
+  margin: 0;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.exercise-sentence {
+  margin: 0;
+  line-height: 1.8;
+}
+
+.exercise-sentence select,
+.exercise-sentence input {
+  width: auto;
+  min-width: 6rem;
+  margin: 0 0.25rem;
+}
+
+.exercise-hint {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+.feedback {
+  margin: 0;
+}
+
+.feedback.success {
+  color: var(--success);
+}
+
+.feedback.error {
+  color: var(--danger);
+}
+
+.no-exercise,
+.no-lessons {
+  margin: 0;
+  color: var(--muted);
+  font-style: italic;
+}
