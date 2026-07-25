@@ -1,6 +1,6 @@
 # Lexory web (React + Vite)
 
-SaaS frontend for the Lexory API.
+Web UI for the Lexory API.
 
 ## Dev setup
 

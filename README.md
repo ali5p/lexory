@@ -32,9 +32,10 @@ user text
 ### Stack
 
 - Backend: FastAPI
+- Web UI: React + TypeScript + Vite (`web/`)
 - Vector database: Qdrant
 - Grammar detection: LanguageTool
-- LLM generation: Ollama
+- LLM generation: Groq (cloud) or Ollama (local profile)
 - Storage: PostgreSQL (relational data) + Qdrant (vectors)
 - Schema: SQLAlchemy + [Alembic](https://alembic.sqlalchemy.org/) (migrations)
 - Infrastructure: Docker
@@ -107,7 +108,7 @@ Once the system pipeline is stable, retrieval quality improvements are planned.
 
 ### Analytics (integrated at runtime)
 
-- **`user_mistake_type_stats`** — activity-index priority stats; recomputed after each `/submit` and `/exercise-feedback`. Drives fallback lesson pick and optional supplemental practice.
+- **`user_mistake_type_stats`** — activity-index priority stats; recomputed after each `/submit` and `POST /exercises/{id}/answer`. Drives fallback lesson pick and optional supplemental practice.
 - **Lesson artifact analytics** — planned batch module for explanation effectiveness. Online `/submit` persists artifacts but does not read them for analytics yet.
 
 ---
@@ -272,6 +273,8 @@ With **`docker compose`**, the **lexory** service receives **`QDRANT_URL`**, **`
 | `QDRANT_URL` | Fixed in `docker-compose.yml` | `http://qdrant:6333` |
 | `LANGUAGETOOL_URL` | Fixed in `docker-compose.yml` | `http://languagetool:8010` |
 | `DATABASE_URL` | Set in `docker-compose.yml` for Lexory-in-Docker (`postgres:5432`) | Async SQLAlchemy URL, e.g. `postgresql+asyncpg://user:pass@host:port/db` |
+| `LEXORY_CORS_ORIGINS` | From `.env` / default local Vite origins | Required for Cloudflare Pages + direct API URL |
+| `LEXORY_EXPOSE_EXERCISE_ANSWERS` | From `.env` / unset in production | Set `1` for Swagger/dev only; includes server answer keys on `/submit` |
 
 ### Database schema and Alembic
 
@@ -283,7 +286,28 @@ On application startup, the service runs `alembic upgrade head` (using a **sync*
 alembic upgrade head
 ```
 
-Current tables (evolve with migrations) include, among others: **`mistake_occurrences`**, **`lesson_artifacts`**, **`exercise_attempts`**, **`user_scoring_events`**.
+Current tables (evolve with migrations) include, among others: **`mistake_occurrences`**, **`lesson_artifacts`**, **`exercises`**, **`exercise_attempts`**, **`user_scoring_events`**.
+
+---
+
+## Web frontend
+
+The web client lives in **`web/`** (React + TypeScript + Vite).
+
+**Local dev** (API on port 8000, e.g. via Docker):
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+Open http://localhost:5173. The dev server proxies `/api/*` to the FastAPI backend. See **`web/README.md`** for production build (`web/dist/`) and Cloudflare Pages notes.
+
+**API surface used by the UI:**
+
+- `POST /submit` — text + `user_id` → lessons and structured exercises
+- `POST /exercises/{exercise_id}/answer` — deterministic grading (MCQ or fill-blank)
 
 ---
 
@@ -307,7 +331,9 @@ Fill out fields `text` and `user_id`, then click “Execute”.
 The LLM response separates **all detected mistakes** from **generated lesson items**:
 
 - `detected_mistakes`: every LanguageTool hit from the submission, each with `selected_for_lesson` (top mistakes by user score, max 3).
-- `lesson_items`: one atomic item per selected mistake. Each item has `lesson_artifact_id`, `target` (mistake metadata), and `lesson` (`topic`, `explanation`, `exercises`). Generation metadata such as `approach_type` is stored internally, not returned in the API.
+- `lesson_items`: one atomic item per selected mistake. Each item has `lesson_artifact_id`, `target` (mistake metadata), and `lesson` (`topic`, `explanation`, `exercises`). Each exercise has a typed `payload` (`multiple_choice` or `fill_blank`). Generation metadata such as `approach_type` is stored internally, not returned in the API.
+
+You can also use the **web UI** at http://localhost:5173 during local development (see [Web frontend](#web-frontend)).
 
 ---
 
@@ -318,10 +344,16 @@ This application uses the following third-party components:
 ### Core components
 
 - Qdrant Server (Apache 2.0)
-- Ollama
-- Qwen2.5 1.5B Instruct (Ollama: `qwen2.5:1.5b-instruct`)
+- Ollama / Groq (LLM providers; see `.env.example`)
+- Qwen2.5 1.5B Instruct (Ollama: `qwen2.5:1.5b-instruct`; Groq: e.g. `llama-3.1-8b-instant`)
 - PostgreSQL (PostgreSQL License)
 - Docker (Apache 2.0)
+
+### Web frontend
+
+- React (MIT)
+- Vite (MIT)
+- TypeScript (Apache 2.0)
 
 ### Python libraries
 
