@@ -76,10 +76,12 @@ def get_sync_migrations_url() -> str:
 
 def run_alembic_upgrade_sync() -> None:
     """Run `alembic upgrade head` using DATABASE_URL; intended for app startup in a thread."""
+    
     from pathlib import Path
 
-    from alembic import command
     from alembic.config import Config
+
+    from alembic import command
 
     root = Path(__file__).resolve().parent.parent
     ini = root / "alembic.ini"

@@ -2,20 +2,29 @@
 
 from typing import Optional
 
-from sqlalchemy import Boolean, Float, Integer, String, Text
+from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
     pass
 
+class DBUser(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    email: Mapped[str] = mapped_column(unique=True, index=True)
+    hashed_password: Mapped[str]
+    mistake_occurrences: Mapped[list["MistakeOccurrence"]] = relationship(back_populates="owner")
+
 
 class MistakeOccurrence(Base):
     __tablename__ = "mistake_occurrences"
 
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    owner: Mapped["DBUser"] = relationship(back_populates="mistake_occurrences")
     mistake_id: Mapped[str] = mapped_column(String, primary_key=True)
-    user_id: Mapped[str] = mapped_column(String, index=True)
     session_id: Mapped[str] = mapped_column(String, index=True, default="")
     user_text_id: Mapped[str] = mapped_column(String, index=True)
     detected_at: Mapped[str] = mapped_column(String, index=True)
@@ -24,6 +33,7 @@ class MistakeOccurrence(Base):
     rule_id: Mapped[str] = mapped_column(String)
     example_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     lesson_artifact_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
 
 
 class LessonArtifact(Base):
