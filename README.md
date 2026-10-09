@@ -17,7 +17,6 @@ Lexory is created to analyze and assess grammar gaps based on a user’s real-li
 
 It is designed to function like a personal tutor–copilot that can identify weaker areas by observing how you speak or by analyzing texts you write for any purpose, without requiring formal tests. It then attempts to teach you using different pedagogical approaches until it finds what works best for you.
 
-Qdrant collections behave as user repositories (TODO: add pseudonymization after LanguageTool, before vectorization).
 
 ### Pipeline
 
@@ -85,11 +84,7 @@ All services are orchestrated with Docker.
 
 ---
 
-## Stability before retrieval quality
-
-Part of the semantic retrieval pipeline was temporarily simplified while stabilizing the end-to-end system flow.
-
-Current pipeline:
+## Current pipeline
 
 ```
 User text
@@ -100,16 +95,6 @@ User text
 → lesson generation
 ```
 
-Once the system pipeline is stable, retrieval quality improvements are planned.
-
----
-
-# Known Issues / Tradeoffs
-
-### Analytics (integrated at runtime)
-
-- **`user_mistake_type_stats`** — activity-index priority stats; recomputed after each `/submit` and `POST /exercises/{id}/answer`. Drives fallback lesson pick and optional supplemental practice.
-- **Lesson artifact analytics** — planned batch module for explanation effectiveness. Online `/submit` persists artifacts but does not read them for analytics yet.
 
 ---
 
@@ -120,10 +105,9 @@ Lexory is an experimental prototype.
 
 Current focus:
 
+- adding an authentication system
 - refining mistake taxonomy
 - improving retrieval quality
-
-Future improvements include stronger fine-tuned LLM models and expanded semantic retrieval.
 
 
 ## Architecture

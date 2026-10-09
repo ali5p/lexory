@@ -4,7 +4,6 @@ from core.exercises import ExerciseAnswerRequest, ExerciseAnswerResponse
 from core.models import SubmitRequest, SubmitResponse
 from rag.service import RAGService
 
-
 router = APIRouter()
 
 
@@ -17,7 +16,7 @@ async def submit_and_lesson(
     request: SubmitRequest,
     rag_service: RAGService = Depends(get_rag_service),
 ):
-    """Combined ingest + lesson. Single flow: text (optional) + user_id → lesson items."""
+
     return await rag_service.submit_and_lesson(
         text=request.text,
         user_id=request.user_id,
