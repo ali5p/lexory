@@ -13,7 +13,7 @@ from llm.base import BaseLLM
 _log = logging.getLogger(__name__)
 
 _DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
-_DEFAULT_MODEL = "llama-3.1-8b-instant"
+_DEFAULT_MODEL = "openai/gpt-oss-20b"
 
 
 class GroqAdapter(BaseLLM):
