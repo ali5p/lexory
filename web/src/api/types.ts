@@ -52,7 +52,6 @@ export type DetectedMistake = {
 
 export type SubmitRequest = {
   text: string;
-  user_id: string;
 };
 
 export type SubmitResponse = {
@@ -63,7 +62,6 @@ export type SubmitResponse = {
 };
 
 export type ExerciseAnswerRequest = {
-  user_id: string;
   selected_option?: string;
   answer?: string;
 };

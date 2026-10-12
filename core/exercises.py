@@ -172,7 +172,6 @@ _generated_adapter: TypeAdapter[GeneratedExercise] = TypeAdapter(GeneratedExerci
 
 
 class ExerciseAnswerRequest(BaseModel):
-    user_id: str
     selected_option: str | None = None
     answer: str | None = None
 

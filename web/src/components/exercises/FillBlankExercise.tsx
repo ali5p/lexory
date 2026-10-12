@@ -4,11 +4,10 @@ import { submitExerciseAnswer } from "../../api/client";
 
 type Props = {
   exerciseId: string;
-  userId: string;
   payload: FillBlankPayload;
 };
 
-export function FillBlankExercise({ exerciseId, userId, payload }: Props) {
+export function FillBlankExercise({ exerciseId, payload }: Props) {
   const [answer, setAnswer] = useState("");
   const [result, setResult] = useState<ExerciseAnswerResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -25,7 +24,6 @@ export function FillBlankExercise({ exerciseId, userId, payload }: Props) {
     setError(null);
     try {
       const response = await submitExerciseAnswer(exerciseId, {
-        user_id: userId,
         answer: answer.trim(),
       });
       setResult(response);

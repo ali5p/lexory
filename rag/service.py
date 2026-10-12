@@ -6,7 +6,11 @@ from typing import Any, Dict, List, Optional, Set
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.exercise_rotation import exercise_type_for_selection_index
-from core.exercises import ExerciseAnswerRequest, ExerciseAnswerResponse, validate_exercise_answer
+from core.exercises import (
+    ExerciseAnswerRequest,
+    ExerciseAnswerResponse,
+    validate_exercise_answer,
+)
 from core.lesson_artifact import LessonArtifactRecord
 from core.models import (
     ContextAssembly,
@@ -536,6 +540,8 @@ class RAGService:
         self,
         exercise_id: str,
         request: ExerciseAnswerRequest,
+        *,
+        user_id: str,
     ) -> ExerciseAnswerResponse:
         exercise_attempt_id = str(uuid.uuid4())
         attempt_timestamp = datetime.now(timezone.utc)
@@ -548,7 +554,7 @@ class RAGService:
             artifact = await repo.get_lesson_artifact_by_id(
                 session, exercise.artifact_id
             )
-            if artifact is None or artifact.user_id != request.user_id:
+            if artifact is None or artifact.user_id != user_id:
                 raise ValueError("Exercise not found")
 
             is_correct, explanation = validate_exercise_answer(
@@ -566,7 +572,7 @@ class RAGService:
                 await repo.insert_user_scoring_event(
                     session,
                     {
-                        "user_id": request.user_id,
+                        "user_id": user_id,
                         "rule_id": None,
                         "mistake_type": mistake_type,
                         "mistake_id": None,
@@ -577,7 +583,6 @@ class RAGService:
                 )
 
             user_answer = request.model_dump(
-                exclude={"user_id"},
                 exclude_none=True,
             )
             await repo.insert_exercise_attempt(
@@ -586,7 +591,7 @@ class RAGService:
                     "exercise_attempt_id": exercise_attempt_id,
                     "exercise_id": exercise_id,
                     "lesson_artifact_id": exercise.artifact_id,
-                    "user_id": request.user_id,
+                    "user_id": user_id,
                     "user_answer": user_answer,
                     "is_correct": is_correct,
                     "attempt_timestamp": attempt_timestamp.isoformat(),
@@ -595,7 +600,7 @@ class RAGService:
             )
             await session.commit()
 
-        await self._refresh_user_mistake_type_stats(request.user_id)
+        await self._refresh_user_mistake_type_stats(user_id)
         return ExerciseAnswerResponse(
             correct=is_correct,
             explanation=explanation,

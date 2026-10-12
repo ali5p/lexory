@@ -3,32 +3,11 @@ import type { SubmitResponse } from "../api/types";
 import { submitText } from "../api/client";
 import { LessonItemCard } from "./LessonItemCard";
 
-const USER_ID_KEY = "lexory_user_id";
-
-function loadUserId(): string {
-  const stored = localStorage.getItem(USER_ID_KEY);
-  if (stored) {
-    return stored;
-  }
-  const generated =
-    typeof crypto !== "undefined" && "randomUUID" in crypto
-      ? crypto.randomUUID()
-      : `user-${Date.now()}`;
-  localStorage.setItem(USER_ID_KEY, generated);
-  return generated;
-}
-
 export function SubmitPanel() {
-  const [userId, setUserId] = useState(loadUserId);
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [response, setResponse] = useState<SubmitResponse | null>(null);
-
-  function handleUserIdChange(value: string) {
-    setUserId(value);
-    localStorage.setItem(USER_ID_KEY, value);
-  }
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -38,7 +17,7 @@ export function SubmitPanel() {
     setLoading(true);
     setError(null);
     try {
-      const result = await submitText({ text: text.trim(), user_id: userId.trim() });
+      const result = await submitText({ text: text.trim() });
       setResponse(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Submit failed.");
@@ -52,15 +31,6 @@ export function SubmitPanel() {
     <div className="submit-panel">
       <form className="submit-form" onSubmit={handleSubmit}>
         <label className="field">
-          <span>User ID</span>
-          <input
-            type="text"
-            value={userId}
-            onChange={(event) => handleUserIdChange(event.target.value)}
-            autoComplete="off"
-          />
-        </label>
-        <label className="field">
           <span>Your text</span>
           <textarea
             rows={5}
@@ -69,7 +39,7 @@ export function SubmitPanel() {
             placeholder="Write a few sentences in English…"
           />
         </label>
-        <button type="submit" disabled={loading || !text.trim() || !userId.trim()}>
+        <button type="submit" disabled={loading || !text.trim()}>
           {loading ? "Analyzing…" : "Submit"}
         </button>
         {error ? <p className="feedback error">{error}</p> : null}
@@ -85,7 +55,6 @@ export function SubmitPanel() {
               <LessonItemCard
                 key={item.lesson_artifact_id ?? `lesson-${index}`}
                 item={item}
-                userId={userId}
               />
             ))
           )}

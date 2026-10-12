@@ -259,6 +259,23 @@ With **`docker compose`**, the **lexory** service receives **`QDRANT_URL`**, **`
 | `DATABASE_URL` | Set in `docker-compose.yml` for Lexory-in-Docker (`postgres:5432`) | Async SQLAlchemy URL, e.g. `postgresql+asyncpg://user:pass@host:port/db` |
 | `LEXORY_CORS_ORIGINS` | From `.env` / default local Vite origins | Required for Cloudflare Pages + direct API URL |
 | `LEXORY_EXPOSE_EXERCISE_ANSWERS` | From `.env` / unset in production | Set `1` for Swagger/dev only; includes server answer keys on `/submit` |
+| `JWT_SECRET` | Required in `.env` | Persistent signing secret for access tokens; generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
+| `JWT_ALGORITHM` | From `.env` / default `HS256` | JWT signing algorithm |
+| `AUTH_COOKIE_SECURE` | From `.env` / default `true` | Refresh-cookie security; keep enabled when served over HTTPS |
+| `REDIS_URL` | `redis://redis:6379/0` in Compose | Redis connection for rotating refresh sessions; defaults to localhost outside Compose |
+
+### Authentication
+
+Register and log in through `POST /auth/register` and `POST /auth/login`. Use the returned
+bearer access token for `/submit` and `/exercises/{id}/answer`; the API identifies the
+account from that token rather than accepting a client-supplied `user_id`. The refresh
+token is stored in an HttpOnly cookie and rotated by `POST /auth/refresh`; use
+`POST /auth/logout` to revoke the active refresh session.
+
+Set a persistent `JWT_SECRET` in `.env` before starting the app. Existing string
+`user_id` data is retained unchanged under its original anonymous IDs; new accounts
+receive UUID string IDs. Historical anonymous records are not automatically linked to
+accounts because the project has no safe way to infer their owners.
 
 ### Database schema and Alembic
 
@@ -270,7 +287,7 @@ On application startup, the service runs `alembic upgrade head` (using a **sync*
 alembic upgrade head
 ```
 
-Current tables (evolve with migrations) include, among others: **`mistake_occurrences`**, **`lesson_artifacts`**, **`exercises`**, **`exercise_attempts`**, **`user_scoring_events`**.
+Current tables (evolve with migrations) include, among others: **`users`**, **`mistake_occurrences`**, **`lesson_artifacts`**, **`exercises`**, **`exercise_attempts`**, **`user_scoring_events`**.
 
 ---
 

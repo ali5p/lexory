@@ -2,28 +2,27 @@
 
 from typing import Optional
 
-from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Float, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 class Base(DeclarativeBase):
     pass
 
+
 class DBUser(Base):
     __tablename__ = "users"
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
     email: Mapped[str] = mapped_column(unique=True, index=True)
-    hashed_password: Mapped[str]
-    mistake_occurrences: Mapped[list["MistakeOccurrence"]] = relationship(back_populates="owner")
+    hashed_password: Mapped[str] = mapped_column(String)
 
 
 class MistakeOccurrence(Base):
     __tablename__ = "mistake_occurrences"
 
-    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
-    owner: Mapped["DBUser"] = relationship(back_populates="mistake_occurrences")
+    user_id: Mapped[str] = mapped_column(String, index=True)
     mistake_id: Mapped[str] = mapped_column(String, primary_key=True)
     session_id: Mapped[str] = mapped_column(String, index=True, default="")
     user_text_id: Mapped[str] = mapped_column(String, index=True)

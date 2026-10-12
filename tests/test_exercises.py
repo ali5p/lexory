@@ -1,6 +1,5 @@
 """Tests for structured exercise validation and answer grading."""
 
-import pytest
 
 from core.exercises import (
     ExerciseAnswerRequest,
@@ -42,7 +41,7 @@ def test_validate_multiple_choice_correct_and_wrong():
     ok, msg = validate_exercise_answer(
         payload,
         answer_key,
-        ExerciseAnswerRequest(user_id="u1", selected_option="plays"),
+        ExerciseAnswerRequest(selected_option="plays"),
     )
     assert ok is True
     assert msg == "Nice!"
@@ -50,7 +49,7 @@ def test_validate_multiple_choice_correct_and_wrong():
     ok, msg = validate_exercise_answer(
         payload,
         answer_key,
-        ExerciseAnswerRequest(user_id="u1", selected_option="play"),
+        ExerciseAnswerRequest(selected_option="play"),
     )
     assert ok is False
     assert "Try plays." in msg
@@ -71,7 +70,7 @@ def test_validate_fill_blank_normalizes_case():
     ok, _ = validate_exercise_answer(
         payload,
         answer_key,
-        ExerciseAnswerRequest(user_id="u1", answer="  Went "),
+        ExerciseAnswerRequest(answer="  Went "),
     )
     assert ok is True
 

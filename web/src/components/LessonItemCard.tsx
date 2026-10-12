@@ -3,10 +3,9 @@ import { ExerciseRenderer } from "./exercises/ExerciseRenderer";
 
 type Props = {
   item: LessonItem;
-  userId: string;
 };
 
-export function LessonItemCard({ item, userId }: Props) {
+export function LessonItemCard({ item }: Props) {
   const { lesson, target } = item;
 
   return (
@@ -28,7 +27,7 @@ export function LessonItemCard({ item, userId }: Props) {
         <p className="no-exercise">No exercise for this lesson yet.</p>
       ) : (
         lesson.exercises.map((exercise) => (
-          <ExerciseRenderer key={exercise.exercise_id} exercise={exercise} userId={userId} />
+          <ExerciseRenderer key={exercise.exercise_id} exercise={exercise} />
         ))
       )}
     </article>

@@ -6,10 +6,10 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# Do not override variables already set by Docker Compose (e.g. DATABASE_URL=@postgres).
-load_dotenv(override=False)
-
 from api.routes import router
+from core.auth import get_jwt_secret
+from core.auth import router as auth_router
+from core.security import create_redis_client, get_allowed_origins
 from rag.embedder import Embedder
 from rag.service import RAGService
 from storage.database import (
@@ -21,40 +21,40 @@ from storage.database import (
 )
 from vectorstore.qdrant_client import QdrantStore
 
-
-def _cors_origins() -> list[str]:
-    raw = os.getenv(
-        "LEXORY_CORS_ORIGINS",
-        "http://localhost:5173,http://127.0.0.1:5173",
-    )
-    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+# Environment-backed settings are read during app configuration and lifespan startup.
+load_dotenv(override=False)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    get_jwt_secret()
     await asyncio.to_thread(run_alembic_upgrade_sync)
     engine = build_engine()
-    await create_tables_with_retry(engine)
-    session_factory = build_session_factory(engine)
-
-    qdrant_url = os.environ.get("QDRANT_URL")
-    qdrant_store = QdrantStore(url=qdrant_url) if qdrant_url else QdrantStore()
-    embedder = Embedder()
-
-    app.state.rag_service = RAGService(qdrant_store, embedder, session_factory)
+    redis_client = create_redis_client()
     try:
+        await redis_client.ping()
+        await create_tables_with_retry(engine)
+        session_factory = build_session_factory(engine)
+        app.state.session_factory = session_factory
+        app.state.redis_client = redis_client
+
+        qdrant_url = os.environ.get("QDRANT_URL")
+        qdrant_store = QdrantStore(url=qdrant_url) if qdrant_url else QdrantStore()
+        embedder = Embedder()
+        app.state.rag_service = RAGService(qdrant_store, embedder, session_factory)
         yield
     finally:
+        await redis_client.aclose()
         await dispose_engine(engine)
 
 
 app = FastAPI(title="Lexory", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_cors_origins(),
+    allow_origins=get_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 app.include_router(router)
-
+app.include_router(auth_router)

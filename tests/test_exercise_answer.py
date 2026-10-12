@@ -1,11 +1,12 @@
 """Tests for deterministic exercise answer processing."""
 
-import pytest
 from unittest.mock import AsyncMock, Mock, patch
 
+import pytest
+
 from core.exercises import ExerciseAnswerRequest
-from rag.service import RAGService
 from rag.embedder import Embedder
+from rag.service import RAGService
 from storage.models import Exercise, LessonArtifact
 from vectorstore.qdrant_client import QdrantStore
 
@@ -88,7 +89,8 @@ async def test_process_exercise_answer_correct_scores_negative(
     ):
         result = await rag_service.process_exercise_answer(
             "ex-1",
-            ExerciseAnswerRequest(user_id="user-1", selected_option="walks"),
+            ExerciseAnswerRequest(selected_option="walks"),
+            user_id="user-1",
         )
 
     assert result.correct is True
@@ -143,7 +145,8 @@ async def test_process_exercise_answer_wrong_scores_plus_one(
     ):
         result = await rag_service.process_exercise_answer(
             "ex-1",
-            ExerciseAnswerRequest(user_id="user-1", selected_option="a"),
+            ExerciseAnswerRequest(selected_option="a"),
+            user_id="user-1",
         )
 
     assert result.correct is False

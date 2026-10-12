@@ -1,9 +1,11 @@
 from datetime import datetime, timezone
-from typing import Optional, List
+from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from core.exercises import ExerciseAnswerRequest, ExerciseAnswerResponse, ExercisePayload
+from core.exercises import (
+    ExercisePayload,
+)
 
 
 class UserText(BaseModel):
@@ -42,7 +44,6 @@ class SessionContext(BaseModel):
 
 class SubmitRequest(BaseModel):
     text: str = ""
-    user_id: str
 
 
 class DetectedMistakeExample(BaseModel):

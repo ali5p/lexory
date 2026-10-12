@@ -4,11 +4,10 @@ import { submitExerciseAnswer } from "../../api/client";
 
 type Props = {
   exerciseId: string;
-  userId: string;
   payload: MultipleChoicePayload;
 };
 
-export function MultipleChoiceExercise({ exerciseId, userId, payload }: Props) {
+export function MultipleChoiceExercise({ exerciseId, payload }: Props) {
   const [selected, setSelected] = useState("");
   const [result, setResult] = useState<ExerciseAnswerResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -25,7 +24,6 @@ export function MultipleChoiceExercise({ exerciseId, userId, payload }: Props) {
     setError(null);
     try {
       const response = await submitExerciseAnswer(exerciseId, {
-        user_id: userId,
         selected_option: selected,
       });
       setResult(response);

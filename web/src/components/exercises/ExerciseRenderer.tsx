@@ -4,15 +4,13 @@ import { MultipleChoiceExercise } from "./MultipleChoiceExercise";
 
 type Props = {
   exercise: Exercise;
-  userId: string;
 };
 
-export function ExerciseRenderer({ exercise, userId }: Props) {
+export function ExerciseRenderer({ exercise }: Props) {
   if (exercise.payload.type === "multiple_choice") {
     return (
       <MultipleChoiceExercise
         exerciseId={exercise.exercise_id}
-        userId={userId}
         payload={exercise.payload}
       />
     );
@@ -21,7 +19,6 @@ export function ExerciseRenderer({ exercise, userId }: Props) {
   return (
     <FillBlankExercise
       exerciseId={exercise.exercise_id}
-      userId={userId}
       payload={exercise.payload}
     />
   );
