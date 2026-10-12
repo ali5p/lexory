@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
 security_scheme = HTTPBearer(auto_error=False)
 password_hasher = PasswordHash.recommended()
-REFRESH_TOKEN_TTL = timedelta(days=30)
+REFRESH_COOKIE_MAX_AGE = 100*24*60*60
 ACCESS_TOKEN_TTL = timedelta(minutes=30)
 
 
@@ -104,7 +104,7 @@ def _set_refresh_cookie(response: Response, token: str) -> None:
     response.set_cookie(
         key="refresh_token",
         value=token,
-        max_age=int(REFRESH_TOKEN_TTL.total_seconds()),
+        max_age=REFRESH_COOKIE_MAX_AGE,
         **_cookie_options(),
     )
 
@@ -200,6 +200,7 @@ async def login_user(
     response: Response,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> TokenResponse:
+    _validate_browser_origin(request)
     user = await db.scalar(select(DBUser).where(DBUser.email == user_data.email))
     if user is None or not await asyncio.to_thread(
         verify_password, user_data.password, user.hashed_password
@@ -214,7 +215,6 @@ async def login_user(
         await request.app.state.redis_client.set(
             _refresh_token_key(refresh_token),
             user.id,
-            ex=REFRESH_TOKEN_TTL,
         )
     except RedisError as exc:
         logger.exception("Could not create an authentication session in Redis")
@@ -259,7 +259,6 @@ async def refresh_session(request: Request, response: Response) -> TokenResponse
         await request.app.state.redis_client.set(
             _refresh_token_key(new_refresh_token),
             user_id,
-            ex=REFRESH_TOKEN_TTL,
         )
     except RedisError as exc:
         logger.exception("Could not rotate an authentication session in Redis")

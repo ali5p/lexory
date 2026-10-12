@@ -37,8 +37,8 @@ async def lifespan(app: FastAPI):
         session_factory = build_session_factory(engine)
         app.state.session_factory = session_factory
         app.state.redis_client = redis_client
-
         qdrant_url = os.environ.get("QDRANT_URL")
+        qdrant_store = QdrantStore(url=qdrant_url) if qdrant_url else QdrantStore()
         qdrant_store = QdrantStore(url=qdrant_url) if qdrant_url else QdrantStore()
         embedder = Embedder()
         app.state.rag_service = RAGService(qdrant_store, embedder, session_factory)

@@ -1,7 +1,8 @@
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +12,7 @@ from core.auth import (
     get_current_user,
     get_jwt_secret,
     hash_password,
+    refresh_session,
     verify_password,
 )
 from core.exercises import ExerciseAnswerRequest, ExerciseAnswerResponse
@@ -58,6 +60,30 @@ async def test_get_current_user_rejects_missing_credentials(monkeypatch):
         await get_current_user(None, AsyncMock(spec=AsyncSession))
 
     assert exc_info.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_refresh_rotates_persistent_session_until_logout(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET", "x" * 40)
+    redis_client = AsyncMock()
+    redis_client.getdel.return_value = "account-id"
+
+    request = SimpleNamespace(
+        cookies={"refresh_token": "old-refresh-token"},
+        headers={"origin": "http://testserver"},
+        base_url="http://testserver/",
+        app=SimpleNamespace(state=SimpleNamespace(redis_client=redis_client)),
+    )
+    response = Response()
+    token = await refresh_session(request, response)
+
+    assert token.access_token
+    redis_client.getdel.assert_awaited_once()
+    redis_client.set.assert_awaited_once()
+    assert "ex" not in redis_client.set.await_args.kwargs
+    cookie = response.headers["set-cookie"].lower()
+    assert "max-age=8640000" in cookie
+    assert "httponly" in cookie
 
 
 @pytest.mark.asyncio

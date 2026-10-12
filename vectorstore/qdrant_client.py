@@ -4,13 +4,13 @@ from pathlib import Path
 from typing import Any, Dict, Optional, cast
 
 from qdrant_client import QdrantClient
-from qdrant_client.local.qdrant_local import QdrantLocal
 from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
+from qdrant_client.local.qdrant_local import QdrantLocal
 from qdrant_client.models import (
     Direction,
     Distance,
-    Filter,
     FieldCondition,
+    Filter,
     MatchValue,
     OrderBy,
     PayloadSchemaType,
@@ -390,4 +390,3 @@ class QdrantStore:
                 }
             )
         return out
-

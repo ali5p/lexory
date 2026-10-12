@@ -38,7 +38,8 @@ Ensure the API allows your Pages origin via `LEXORY_CORS_ORIGINS`.
 - `POST /submit` — text → lessons and exercises (requires a bearer access token)
 - `POST /exercises/{id}/answer` — grade MCQ or fill-blank (requires a bearer access token)
 
-The UI signs in before showing the learning flow. Account identity is derived from the
-access token; requests do not send a `user_id`.
+The UI signs in before showing the learning flow and refreshes the session cookie
+automatically on reload. Sign out revokes the refresh
+session.
 
 Types live in `src/api/types.ts` and should stay aligned with FastAPI OpenAPI.

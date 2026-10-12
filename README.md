@@ -262,20 +262,15 @@ With **`docker compose`**, the **lexory** service receives **`QDRANT_URL`**, **`
 | `JWT_SECRET` | Required in `.env` | Persistent signing secret for access tokens; generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
 | `JWT_ALGORITHM` | From `.env` / default `HS256` | JWT signing algorithm |
 | `AUTH_COOKIE_SECURE` | From `.env` / default `true` | Refresh-cookie security; keep enabled when served over HTTPS |
-| `REDIS_URL` | `redis://redis:6379/0` in Compose | Redis connection for rotating refresh sessions; defaults to localhost outside Compose |
+| `REDIS_URL` | `redis://redis:6379/0` in Compose | Redis connection for persistent refresh sessions; defaults to localhost outside Compose |
 
 ### Authentication
 
-Register and log in through `POST /auth/register` and `POST /auth/login`. Use the returned
-bearer access token for `/submit` and `/exercises/{id}/answer`; the API identifies the
-account from that token rather than accepting a client-supplied `user_id`. The refresh
-token is stored in an HttpOnly cookie and rotated by `POST /auth/refresh`; use
-`POST /auth/logout` to revoke the active refresh session.
-
-Set a persistent `JWT_SECRET` in `.env` before starting the app. Existing string
-`user_id` data is retained unchanged under its original anonymous IDs; new accounts
-receive UUID string IDs. Historical anonymous records are not automatically linked to
-accounts because the project has no safe way to infer their owners.
+Register and log in through `POST /auth/register` and `POST /auth/login`.
+A persistent HttpOnly refresh cookie restores sign-in after reloads and
+browser restarts, and is rotated automatically. The refresh session remains in Redis
+until logout; browsers may cap cookie lifetime, so it is renewed on refresh and requires
+sign-in again after 100 days without use. Use `POST /auth/logout` to revoke it.
 
 ### Database schema and Alembic
 
