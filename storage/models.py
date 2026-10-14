@@ -80,8 +80,8 @@ class ExerciseAttempt(Base):
 
 class UserScoringEvent(Base):
     """
-    Incremental scoring: +1 / 0 / -0.5 per event. Totals are SUM(delta) per mistake_type,
-    clamped at read time; tie-break uses MAX(occurred_at) per type.
+    Incremental scoring: +1 / 0 / -0.5 per event. Totals are SUM(delta) per 
+    mistake_type, clamped at read time; tie-break uses MAX(occurred_at) per type.
     """
 
     __tablename__ = "user_scoring_events"

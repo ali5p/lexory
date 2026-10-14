@@ -6,6 +6,7 @@ import asyncio
 import logging
 import sys
 
+from core.context import current_user_id_ctx
 from storage import repositories as repo
 from storage.database import build_engine, build_session_factory
 
@@ -14,15 +15,19 @@ _log = logging.getLogger(__name__)
 
 async def _main_async(user_id: str) -> None:
     logging.basicConfig(level=logging.INFO)
-    engine = build_engine()
-    session_factory = build_session_factory(engine)
+    context_token = current_user_id_ctx.set(user_id)
+    engine = None
     try:
+        engine = build_engine()
+        session_factory = build_session_factory(engine)
         async with session_factory() as session:
             count = await repo.recompute_user_mistake_type_stats(session, user_id)
             await session.commit()
         _log.info("user=%s rows=%s", user_id, count)
     finally:
-        await engine.dispose()
+        if engine is not None:
+            await engine.dispose()
+        current_user_id_ctx.reset(context_token)
 
 
 def main(user_id: str) -> None:

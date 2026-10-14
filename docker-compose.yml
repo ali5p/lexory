@@ -23,6 +23,8 @@ services:
       # Explicit URL so host .env (localhost) does not win over mounted .env in the container.
       DATABASE_URL: postgresql+asyncpg://lexory:lexory@postgres:5432/lexory
       POSTGRES_HOST: postgres
+      LEXORY_APP_DB_PASSWORD: ${LEXORY_APP_DB_PASSWORD:?Set a 32+ character URL-safe password in .env}
+      APP_DATABASE_URL: "postgresql+asyncpg://lexory_app:${LEXORY_APP_DB_PASSWORD:?Set a 32+ character URL-safe password in .env}@postgres:5432/lexory"
       REDIS_URL: redis://redis:6379/0
     depends_on:
       qdrant:

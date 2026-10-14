@@ -15,6 +15,7 @@ from core.auth import (
     refresh_session,
     verify_password,
 )
+from core.context import current_user_id_ctx
 from core.exercises import ExerciseAnswerRequest, ExerciseAnswerResponse
 from core.models import SubmitRequest
 from storage.models import DBUser
@@ -46,10 +47,14 @@ async def test_get_current_user_uses_signed_subject(monkeypatch):
         credentials=create_access_token(user.id),
     )
 
-    result = await get_current_user(credentials, db)
+    dependency = get_current_user(credentials, db)
+    result = await anext(dependency)
 
     assert result is user
     db.get.assert_awaited_once_with(DBUser, user.id)
+    assert current_user_id_ctx.get() == user.id
+    await dependency.aclose()
+    assert current_user_id_ctx.get() is None
 
 
 @pytest.mark.asyncio
@@ -57,7 +62,7 @@ async def test_get_current_user_rejects_missing_credentials(monkeypatch):
     monkeypatch.setenv("JWT_SECRET", "x" * 40)
 
     with pytest.raises(HTTPException) as exc_info:
-        await get_current_user(None, AsyncMock(spec=AsyncSession))
+        await anext(get_current_user(None, AsyncMock(spec=AsyncSession)))
 
     assert exc_info.value.status_code == 401
 

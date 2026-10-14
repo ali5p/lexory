@@ -23,6 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.context import current_user_id_ctx
 from core.security import get_allowed_origins
 from storage.models import DBUser
 
@@ -134,7 +135,7 @@ async def get_current_user(
         HTTPAuthorizationCredentials | None, Depends(security_scheme)
     ],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> DBUser:
+) -> AsyncIterator[DBUser]:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -157,10 +158,14 @@ async def get_current_user(
     if not isinstance(user_id, str) or not user_id:
         raise credentials_exception
 
-    user = await db.get(DBUser, user_id)
-    if user is None:
-        raise credentials_exception
-    return user
+    context_token = current_user_id_ctx.set(user_id)
+    try:
+        user = await db.get(DBUser, user_id)
+        if user is None:
+            raise credentials_exception
+        yield user
+    finally:
+        current_user_id_ctx.reset(context_token)
 
 
 @router.post("/register", response_model=UserResponse, status_code=201)

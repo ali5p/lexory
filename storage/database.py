@@ -6,14 +6,16 @@ import os
 from collections.abc import AsyncGenerator
 from urllib.parse import quote, urlparse, urlunparse
 
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.orm import Session
 
-from storage.models import Base
+from core.context import current_user_id_ctx
 
 _log = logging.getLogger(__name__)
 
@@ -24,8 +26,9 @@ def _running_in_docker() -> bool:
 
 def _normalize_database_url_for_docker(url: str) -> str:
     """
-    Host-mounted .env often uses localhost:5432. Inside a container that points at the
-    container itself, not the postgres service. Rewrite to POSTGRES_HOST (default postgres).
+    Host-mounted .env often uses localhost:5432.
+    Inside a container that points at the container itself, not the postgres service.
+    Rewrite to POSTGRES_HOST (default postgres).
     """
     if not url or not _running_in_docker():
         return url
@@ -45,7 +48,14 @@ def _normalize_database_url_for_docker(url: str) -> str:
         auth = ""
     netloc = f"{auth}{target}:{port}"
     fixed = urlunparse(
-        (parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment)
+        (
+            parsed.scheme,
+            netloc,
+            parsed.path,
+            parsed.params,
+            parsed.query,
+            parsed.fragment,
+        )
     )
     _log.info(
         "DATABASE_URL pointed at %s inside Docker; using host %s instead",
@@ -56,15 +66,25 @@ def _normalize_database_url_for_docker(url: str) -> str:
 
 
 def get_database_url() -> str:
+    """Return the privileged URL used only by Alembic migrations."""
     url = os.environ.get("DATABASE_URL", "")
     if not url:
         raise RuntimeError("DATABASE_URL environment variable is not set")
     return _normalize_database_url_for_docker(url)
 
 
+def get_app_database_url() -> str:
+    """Return the restricted URL used by application requests."""
+    url = os.environ.get("APP_DATABASE_URL", "")
+    if not url:
+        raise RuntimeError("APP_DATABASE_URL environment variable is not set")
+    return _normalize_database_url_for_docker(url)
+
+
 def get_sync_migrations_url() -> str:
     """
-    Sync driver URL for Alembic (and command.upgrade from app). Async sessions keep asyncpg.
+    Sync driver URL for Alembic (and command.upgrade from app).
+    Async sessions keep asyncpg.
     """
     url = get_database_url()
     if url.startswith("postgresql+asyncpg://"):
@@ -75,8 +95,9 @@ def get_sync_migrations_url() -> str:
 
 
 def run_alembic_upgrade_sync() -> None:
-    """Run `alembic upgrade head` using DATABASE_URL; intended for app startup in a thread."""
-    
+    """Run `alembic upgrade head` using DATABASE_URL;
+    intended for app startup in a thread."""
+
     from pathlib import Path
 
     from alembic.config import Config
@@ -94,7 +115,7 @@ def run_alembic_upgrade_sync() -> None:
 
 
 def build_engine(database_url: str | None = None) -> AsyncEngine:
-    url = database_url or get_database_url()
+    url = database_url or get_app_database_url()
     # Docker / local Postgres often has TLS off; asyncpg may negotiate SSL otherwise.
     connect_args: dict = {}
     if os.environ.get("DATABASE_SSL", "").lower() not in ("1", "true", "yes"):
@@ -112,22 +133,18 @@ def build_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSessio
     return async_sessionmaker(engine, expire_on_commit=False)
 
 
-async def create_tables(engine: AsyncEngine) -> None:
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-
-async def create_tables_with_retry(
+async def check_database_with_retry(
     engine: AsyncEngine,
     *,
     attempts: int = 30,
     delay_seconds: float = 2.0,
 ) -> None:
-    """Run DDL after PostgreSQL accepts connections (Docker startup race)."""
+    """Wait for PostgreSQL readiness without granting the runtime role DDL access."""
     last_exc: BaseException | None = None
     for attempt in range(1, attempts + 1):
         try:
-            await create_tables(engine)
+            async with engine.connect() as connection:
+                await connection.execute(text("SELECT 1"))
             if attempt > 1:
                 _log.info("PostgreSQL ready after %s attempt(s)", attempt)
             return
@@ -156,3 +173,12 @@ async def get_session(
     """Yield one session per call; commit is the caller's responsibility."""
     async with session_factory() as session:
         yield session
+
+
+@event.listens_for(Session, "after_begin")
+def _set_rls_context(session, transaction, connection) -> None:
+    user_id = current_user_id_ctx.get() or ""
+    connection.execute(
+        text("SELECT set_config('app.current_user_id', :user_id, true)"),
+        {"user_id": user_id},
+    )

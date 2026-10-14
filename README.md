@@ -257,6 +257,8 @@ With **`docker compose`**, the **lexory** service receives **`QDRANT_URL`**, **`
 | `QDRANT_URL` | Fixed in `docker-compose.yml` | `http://qdrant:6333` |
 | `LANGUAGETOOL_URL` | Fixed in `docker-compose.yml` | `http://languagetool:8010` |
 | `DATABASE_URL` | Set in `docker-compose.yml` for Lexory-in-Docker (`postgres:5432`) | Async SQLAlchemy URL, e.g. `postgresql+asyncpg://user:pass@host:port/db` |
+| `APP_DATABASE_URL` | From `.env` locally; set to the `lexory_app` role in Compose | Restricted async URL used for runtime requests (not migrations) |
+| `LEXORY_APP_DB_PASSWORD` | Required in `.env` and Compose | 32+ character URL-safe password for the restricted runtime role |
 | `LEXORY_CORS_ORIGINS` | From `.env` / default local Vite origins | Required for Cloudflare Pages + direct API URL |
 | `LEXORY_EXPOSE_EXERCISE_ANSWERS` | From `.env` / unset in production | Set `1` for Swagger/dev only; includes server answer keys on `/submit` |
 | `JWT_SECRET` | Required in `.env` | Persistent signing secret for access tokens; generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
@@ -283,6 +285,23 @@ alembic upgrade head
 ```
 
 Current tables (evolve with migrations) include, among others: **`users`**, **`mistake_occurrences`**, **`lesson_artifacts`**, **`exercises`**, **`exercise_attempts`**, **`user_scoring_events`**.
+
+`DATABASE_URL` is the privileged migration/admin connection. The application itself
+must use `APP_DATABASE_URL`, which authenticates as the restricted `lexory_app` role;
+PostgreSQL superusers and `BYPASSRLS` roles bypass row-level security. Before the first
+startup, set `LEXORY_APP_DB_PASSWORD` in `.env` to a unique, URL-safe secret of at
+least 32 characters (for example, generate one with
+`python -c "import secrets; print(secrets.token_urlsafe(32))"`). The migration
+creates or updates the runtime role and grants table access. 
+
+PostgreSQL RLS is enabled and forced on `mistake_occurrences`, `lesson_artifacts`,
+`exercise_attempts`, `user_scoring_events`, and `user_mistake_type_stats`, filtering
+their `user_id` against the authenticated request context. `exercises` is isolated
+through its indexed parent `lesson_artifacts` row. Missing tenant context fails
+closed; `users` remains outside RLS for registration and login. Keep the existing
+application ownership checks and Qdrant user filters as defense in depth. When a
+future migration adds a user-owned table, it must also add an RLS policy (and grants)
+before application code uses it.
 
 ---
 

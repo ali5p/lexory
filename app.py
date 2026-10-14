@@ -15,7 +15,7 @@ from rag.service import RAGService
 from storage.database import (
     build_engine,
     build_session_factory,
-    create_tables_with_retry,
+    check_database_with_retry,
     dispose_engine,
     run_alembic_upgrade_sync,
 )
@@ -33,7 +33,7 @@ async def lifespan(app: FastAPI):
     redis_client = create_redis_client()
     try:
         await redis_client.ping()
-        await create_tables_with_retry(engine)
+        await check_database_with_retry(engine)
         session_factory = build_session_factory(engine)
         app.state.session_factory = session_factory
         app.state.redis_client = redis_client
