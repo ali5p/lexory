@@ -50,7 +50,7 @@ class QdrantStore:
         self.path = Path(path)
         self.path.mkdir(exist_ok=True)
         if url:
-            self.client = QdrantClient(url=url)
+            self.client = QdrantClient(url=url, prefer_grpc=True)
             self._ensure_collections_remote_with_retries()
         else:
             self.client = QdrantLocal(str(self.path))

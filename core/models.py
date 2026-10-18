@@ -3,9 +3,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from core.exercises import (
-    ExercisePayload,
-)
+from core.exercises import ExercisePayload
 
 
 class UserText(BaseModel):

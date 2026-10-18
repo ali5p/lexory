@@ -41,7 +41,6 @@ class UserCreate(BaseModel):
     password: str = Field(min_length=8, max_length=128)
 
     @field_validator("email")
-    @classmethod
     def normalize_email(cls, value: EmailStr) -> str:
         return str(value).strip().lower()
 
