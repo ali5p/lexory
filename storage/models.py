@@ -2,9 +2,9 @@
 
 from typing import Optional
 
-from sqlalchemy import Boolean, Float, Integer, String, Text
+from sqlalchemy import ForeignKey, Boolean, Float, Integer, String, UniqueConstraint, Text
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
@@ -17,6 +17,32 @@ class DBUser(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     email: Mapped[str] = mapped_column(unique=True, index=True)
     hashed_password: Mapped[str] = mapped_column(String)
+    external_identities: Mapped[list["DBExternalIdentity"]] = relationship(
+            back_populates="user",
+            cascade="all, delete-orphan",
+        )
+
+
+class DBExternalIdentity(Base):
+    __tablename__ = "external_identities"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    provider: Mapped[str] = mapped_column(String(50))
+    provider_subject: Mapped[str] = mapped_column(String(255))
+    user: Mapped["DBUser"] = relationship(back_populates="external_identities")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "provider",
+            "provider_subject",
+            name="uq_external_identity_provider_subject",
+        ),
+    )
+    
 
 
 class MistakeOccurrence(Base):

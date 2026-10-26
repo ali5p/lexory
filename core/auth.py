@@ -13,19 +13,23 @@ from hashlib import sha256
 from typing import Annotated, Any
 
 import jwt
+from jwt.exceptions import InvalidTokenError
+from google.auth.exceptions import GoogleAuthError
+from google.auth.transport.requests import Request as GoogleRequest
+from google.oauth2 import id_token as google_id_token
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jwt.exceptions import InvalidTokenError
 from pwdlib import PasswordHash
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from redis.exceptions import RedisError
-from sqlalchemy import select
+from sqlalchemy import and_, select, Session
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from core.context import current_user_id_ctx
-from core.security import get_allowed_origins
-from storage.models import DBUser
+from core.security import create_redis_client, get_allowed_origins
+from storage.models import DBUser, DBExternalIdentity
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +38,12 @@ security_scheme = HTTPBearer(auto_error=False)
 password_hasher = PasswordHash.recommended()
 REFRESH_COOKIE_MAX_AGE = 100*24*60*60
 ACCESS_TOKEN_TTL = timedelta(minutes=30)
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
+GOOGLE_REDIRECT_URI = os.getenv(
+    "GOOGLE_REDIRECT_URI",
+    "http://localhost:5173/auth/callback",
+).strip()
 
 
 class UserCreate(BaseModel):
@@ -57,6 +67,16 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
+class GoogleCodeExchange(BaseModel):
+    code: str = Field(min_length=1, max_length=2048)
+    code_verifier: str = Field(
+        min_length=43,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9._~-]+$",
+    )
+    nonce: str = Field(min_length=32, max_length=128)    
+
+
 def get_jwt_secret() -> str:
     secret = os.getenv("JWT_SECRET", "").strip()
     if len(secret) < 32:
@@ -67,9 +87,26 @@ def get_jwt_secret() -> str:
 def create_access_token(user_id: str) -> str:
     now = datetime.now(UTC)
     return jwt.encode(
-        {"sub": user_id, "iat": now, "exp": now + ACCESS_TOKEN_TTL},
+    {
+        "sub": user_id, 
+        "iat": now, 
+        "exp": now + ACCESS_TOKEN_TTL,
+        "jti": str(uuid.uuid4())
+    },
         get_jwt_secret(),
         algorithm=os.getenv("JWT_ALGORITHM", "HS256"),
+    )
+
+
+def issue_app_session(user: DBUser, response: Response) -> TokenResponse:
+    user_id = str(user.id)
+    refresh_token = secrets.token_urlsafe(48)
+    store_refresh_token(refresh_token, user_id)
+    _set_refresh_cookie(response, refresh_token)
+
+    return TokenResponse(
+        access_token=create_access_token(user_id=user_id),
+        token_type="bearer",
     )
 
 
@@ -84,6 +121,14 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 def _refresh_token_key(refresh_token: str) -> str:
     token_hash = sha256(refresh_token.encode("utf-8")).hexdigest()
     return f"lexory:refresh:{token_hash}"
+
+
+def store_refresh_token(refresh_token: str, user_id: str) -> None:
+    create_redis_client.set(
+        _refresh_token_key(refresh_token), 
+        user_id, 
+        ex=REFRESH_COOKIE_MAX_AGE
+    )
 
 
 def _cookie_options() -> dict[str, Any]:
@@ -229,6 +274,162 @@ async def login_user(
 
     _set_refresh_cookie(response, refresh_token)
     return TokenResponse(access_token=create_access_token(user.id))
+
+
+
+
+
+
+
+
+@router.get("/auth/google/config")
+def get_google_auth_config() -> dict[str, str]:
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Google sign-in is not configured",
+        )
+    return {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+    }
+
+
+def exchange_google_code(code: str, code_verifier: str) -> str:
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Google sign-in is not configured",
+        )
+
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            response = client.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "code": code,
+                    "client_id": GOOGLE_CLIENT_ID,
+                    "client_secret": GOOGLE_CLIENT_SECRET,
+                    "redirect_uri": GOOGLE_REDIRECT_URI,
+                    "grant_type": "authorization_code",
+                    "code_verifier": code_verifier,
+                },
+            )
+            response.raise_for_status()
+            token_response = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.info("Google authorization-code exchange failed")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Google authentication failed",
+        ) from exc
+
+    id_token = token_response.get("id_token") if isinstance(token_response, dict) else None
+    if not isinstance(id_token, str) or not id_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Google authentication failed",
+        )
+    return id_token
+
+
+def verify_google_identity(token: str, expected_nonce: str) -> tuple[str, str]:
+    try:
+        claims = google_id_token.verify_oauth2_token(
+            token,
+            GoogleRequest(),
+            GOOGLE_CLIENT_ID,
+        )
+    except (ValueError, GoogleAuthError) as exc:
+        logger.info("Google ID-token validation failed")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Google authentication failed",
+        ) from exc
+
+    if claims.get("nonce") != expected_nonce:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Google authentication failed",
+        )
+
+    subject = claims.get("sub")
+    email = claims.get("email")
+    if (
+        not isinstance(subject, str)
+        or not subject
+        or not isinstance(email, str)
+        or not email
+        or claims.get("email_verified") is not True
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Google authentication failed",
+        )
+
+    return subject, email.strip().lower()
+
+
+@router.post("/auth/google/exchange", response_model=TokenResponse)
+def google_code_exchange(
+    payload: GoogleCodeExchange,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> TokenResponse:
+    _validate_browser_origin(request)
+
+    id_token = exchange_google_code(payload.code, payload.code_verifier)
+    provider_subject, email = verify_google_identity(id_token, payload.nonce)
+
+    identity_query = select(DBExternalIdentity).where(
+        and_(
+            DBExternalIdentity.provider == "google",
+            DBExternalIdentity.provider_subject == provider_subject,
+        )
+    )
+    identity = db.scalars(identity_query).first()
+    if identity is not None:
+        user = db.get(DBUser, identity.user_id)
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Google authentication failed",
+            )
+        return issue_app_session(user, response)
+
+    user = DBUser(email=email, hashed_password=None)
+    identity = DBExternalIdentity(
+        provider="google",
+        provider_subject=provider_subject,
+        user=user,
+    )
+    db.add(user)
+    db.add(identity)
+    try:
+        db.commit()
+        db.refresh(user)
+    except IntegrityError as exc:
+        db.rollback()
+        identity = db.scalars(identity_query).first()
+        if identity is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Could not create Google account",
+            ) from exc
+        user = db.get(DBUser, identity.user_id)
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Google authentication failed",
+            ) from exc
+
+    return issue_app_session(user, response)
+
+
+
+
+
 
 
 @router.post("/refresh", response_model=TokenResponse)
