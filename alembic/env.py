@@ -1,3 +1,4 @@
+import os
 import sys
 from logging.config import fileConfig
 from pathlib import Path
@@ -9,6 +10,18 @@ from sqlalchemy import engine_from_config, pool
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
+
+
+from dotenv import load_dotenv
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ENV_PATH = os.path.join(BASE_DIR, ".env")
+
+if os.path.exists(ENV_PATH):
+    load_dotenv(ENV_PATH)
+else:
+    print(f"Warning: Could not automatically locate .env file at {ENV_PATH}")
+
 
 from storage.database import get_sync_migrations_url  # noqa: E402
 from storage.models import Base  # noqa: E402

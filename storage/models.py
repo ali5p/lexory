@@ -27,7 +27,7 @@ class DBExternalIdentity(Base):
     __tablename__ = "external_identities"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(
+    user_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),
         index=True,
     )
