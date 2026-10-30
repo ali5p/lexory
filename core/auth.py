@@ -14,6 +14,7 @@ from typing import Annotated, Any
 
 import jwt
 from jwt.exceptions import InvalidTokenError
+import httpx
 from google.auth.exceptions import GoogleAuthError
 from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2 import id_token as google_id_token
@@ -22,10 +23,10 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pwdlib import PasswordHash
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from redis.exceptions import RedisError
-from sqlalchemy import and_, select, Session
+from sqlalchemy import and_, select
+from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
 
 from core.context import current_user_id_ctx
 from core.security import create_redis_client, get_allowed_origins
@@ -276,13 +277,7 @@ async def login_user(
     return TokenResponse(access_token=create_access_token(user.id))
 
 
-
-
-
-
-
-
-@router.get("/auth/google/config")
+@router.get("/google/config")
 def get_google_auth_config() -> dict[str, str]:
     if not GOOGLE_CLIENT_ID:
         raise HTTPException(
@@ -370,17 +365,21 @@ def verify_google_identity(token: str, expected_nonce: str) -> tuple[str, str]:
     return subject, email.strip().lower()
 
 
-@router.post("/auth/google/exchange", response_model=TokenResponse)
-def google_code_exchange(
+@router.post("/google/exchange", response_model=TokenResponse)
+async def google_code_exchange(
     payload: GoogleCodeExchange,
     request: Request,
     response: Response,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
     _validate_browser_origin(request)
 
-    id_token = exchange_google_code(payload.code, payload.code_verifier)
-    provider_subject, email = verify_google_identity(id_token, payload.nonce)
+    id_token = await asyncio.to_thread(
+        exchange_google_code, payload.code, payload.code_verifier
+    )
+    provider_subject, email = await asyncio.to_thread(
+        verify_google_identity, id_token, payload.nonce
+    )
 
     identity_query = select(DBExternalIdentity).where(
         and_(
@@ -388,15 +387,18 @@ def google_code_exchange(
             DBExternalIdentity.provider_subject == provider_subject,
         )
     )
-    identity = db.scalars(identity_query).first()
+
+    result = await db.execute(identity_query)
+    identity = result.scalars().first()
+
     if identity is not None:
-        user = db.get(DBUser, identity.user_id)
+        user = await db.get(DBUser, identity.user_id)
         if user is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Google authentication failed",
             )
-        return issue_app_session(user, response)
+        return await issue_app_session(user, response, request.app.state.redis_client)
 
     user = DBUser(email=email, hashed_password=None)
     identity = DBExternalIdentity(
@@ -407,29 +409,25 @@ def google_code_exchange(
     db.add(user)
     db.add(identity)
     try:
-        db.commit()
-        db.refresh(user)
+        await db.commit()
+        await db.refresh(user)
     except IntegrityError as exc:
-        db.rollback()
-        identity = db.scalars(identity_query).first()
+        await db.rollback()
+        result = await db.execute(identity_query)
+        identity = result.scalars().first()
         if identity is None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Could not create Google account",
             ) from exc
-        user = db.get(DBUser, identity.user_id)
+        user = await db.get(DBUser, identity.user_id)
         if user is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Google authentication failed",
             ) from exc
 
-    return issue_app_session(user, response)
-
-
-
-
-
+    return await issue_app_session(user, response, request.app.state.redis_client)
 
 
 @router.post("/refresh", response_model=TokenResponse)

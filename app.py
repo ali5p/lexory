@@ -3,6 +3,9 @@ import os
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
+
+load_dotenv(override=False)
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -20,9 +23,6 @@ from storage.database import (
     run_alembic_upgrade_sync,
 )
 from vectorstore.qdrant_client import QdrantStore
-
-# Environment-backed settings are read during app configuration and lifespan startup.
-load_dotenv(override=False)
 
 
 @asynccontextmanager
