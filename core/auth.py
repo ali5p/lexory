@@ -12,25 +12,25 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import Annotated, Any
 
-import jwt
-from jwt.exceptions import InvalidTokenError
 import httpx
+import jwt
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from google.auth.exceptions import GoogleAuthError
 from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2 import id_token as google_id_token
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jwt.exceptions import InvalidTokenError
 from pwdlib import PasswordHash
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from redis.asyncio import Redis
 from redis.exceptions import RedisError
-from sqlalchemy import and_, select
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.context import current_user_id_ctx
-from core.security import create_redis_client, get_allowed_origins
-from storage.models import DBUser, DBExternalIdentity
+from core.security import get_allowed_origins
+from storage.models import DBExternalIdentity, DBUser
 
 logger = logging.getLogger(__name__)
 
@@ -99,10 +99,25 @@ def create_access_token(user_id: str) -> str:
     )
 
 
-def issue_app_session(user: DBUser, response: Response) -> TokenResponse:
+async def issue_app_session(
+    user: DBUser,
+    response: Response,
+    redis_client: Redis,
+) -> TokenResponse:
     user_id = str(user.id)
     refresh_token = secrets.token_urlsafe(48)
-    store_refresh_token(refresh_token, user_id)
+    try:
+        await redis_client.set(
+            _refresh_token_key(refresh_token),
+            user_id,
+            ex=REFRESH_COOKIE_MAX_AGE,
+        )
+    except RedisError as exc:
+        logger.exception("Could not create a Google authentication session in Redis")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication session store is unavailable",
+        ) from exc
     _set_refresh_cookie(response, refresh_token)
 
     return TokenResponse(
@@ -122,14 +137,6 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 def _refresh_token_key(refresh_token: str) -> str:
     token_hash = sha256(refresh_token.encode("utf-8")).hexdigest()
     return f"lexory:refresh:{token_hash}"
-
-
-def store_refresh_token(refresh_token: str, user_id: str) -> None:
-    create_redis_client.set(
-        _refresh_token_key(refresh_token), 
-        user_id, 
-        ex=REFRESH_COOKIE_MAX_AGE
-    )
 
 
 def _cookie_options() -> dict[str, Any]:
@@ -252,7 +259,7 @@ async def login_user(
 ) -> TokenResponse:
     _validate_browser_origin(request)
     user = await db.scalar(select(DBUser).where(DBUser.email == user_data.email))
-    if user is None or not await asyncio.to_thread(
+    if user is None or user.hashed_password is None or not await asyncio.to_thread(
         verify_password, user_data.password, user.hashed_password
     ):
         raise HTTPException(
@@ -319,7 +326,11 @@ def exchange_google_code(code: str, code_verifier: str) -> str:
             detail="Google authentication failed",
         ) from exc
 
-    id_token = token_response.get("id_token") if isinstance(token_response, dict) else None
+    id_token = (
+        token_response.get("id_token")
+        if isinstance(token_response, dict)
+        else None
+    )
     if not isinstance(id_token, str) or not id_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -381,6 +392,10 @@ async def google_code_exchange(
         verify_google_identity, id_token, payload.nonce
     )
 
+    await db.execute(
+        text("SELECT set_config('app.google_subject', :subject, true)"),
+        {"subject": provider_subject},
+    )
     identity_query = select(DBExternalIdentity).where(
         and_(
             DBExternalIdentity.provider == "google",
@@ -400,22 +415,54 @@ async def google_code_exchange(
             )
         return await issue_app_session(user, response, request.app.state.redis_client)
 
-    user = DBUser(email=email, hashed_password=None)
+    user = DBUser(
+        id=str(uuid.uuid4()),
+        email=email,
+        hashed_password=None,
+    )
     identity = DBExternalIdentity(
         provider="google",
         provider_subject=provider_subject,
-        user=user,
+        user_id=user.id,
     )
     db.add(user)
-    db.add(identity)
     try:
+        await db.execute(
+            text("SELECT set_config('app.current_user_id', :user_id, true)"),
+            {"user_id": user.id},
+        )
+        db.add(identity)
         await db.commit()
         await db.refresh(user)
     except IntegrityError as exc:
         await db.rollback()
+        constraint_name = getattr(
+            getattr(exc.orig, "diag", None),
+            "constraint_name",
+            None,
+        )
+        logger.warning(
+            "Google account creation failed due to database constraint %s",
+            constraint_name or "unknown",
+        )
+        await db.execute(
+            text("SELECT set_config('app.google_subject', :subject, true)"),
+            {"subject": provider_subject},
+        )
         result = await db.execute(identity_query)
         identity = result.scalars().first()
         if identity is None:
+            existing_user_id = await db.scalar(
+                select(DBUser.id).where(DBUser.email == email)
+            )
+            if existing_user_id is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "An account with this email already exists. "
+                        "Sign in using its existing method."
+                    ),
+                ) from exc
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Could not create Google account",

@@ -13,6 +13,9 @@ services:
       JWT_SECRET: ${JWT_SECRET:-}
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
       AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:5173/auth/callback}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:1.5b-instruct}
       HF_TOKEN: ${HF_TOKEN:-}
       # Use service hostnames here — not localhost. A host .env with

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { logoutUser, refreshAccessToken, setAccessToken } from "./api/client";
 import { AuthPanel } from "./components/AuthPanel";
+import { GoogleOAuthCallback } from "./components/GoogleOAuthCallback";
 import { SubmitPanel } from "./components/SubmitPanel";
 import "./App.css";
 
@@ -8,8 +9,16 @@ function App() {
   const [checkingSession, setCheckingSession] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [googleCallback, setGoogleCallback] = useState(
+    () => window.location.pathname === "/auth/callback",
+  );
 
   useEffect(() => {
+    if (window.location.pathname === "/auth/callback") {
+      setCheckingSession(false);
+      return;
+    }
+
     let active = true;
     refreshAccessToken()
       .then((restored) => {
@@ -50,6 +59,12 @@ function App() {
     setAccessToken(accessToken);
     setAuthenticated(true);
     setAuthError(null);
+    setGoogleCallback(false);
+  }
+
+  function handleGoogleOAuthError(message: string) {
+    setAuthError(message);
+    setGoogleCallback(false);
   }
 
   return (
@@ -59,7 +74,12 @@ function App() {
         <p>Submit English text, get lessons and exercises.</p>
       </header>
       <main>
-        {checkingSession ? (
+        {googleCallback ? (
+          <GoogleOAuthCallback
+            onAuthenticated={handleAuthenticated}
+            onError={handleGoogleOAuthError}
+          />
+        ) : checkingSession ? (
           <p>Checking your session…</p>
         ) : authenticated ? (
           <>

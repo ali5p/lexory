@@ -39,6 +39,31 @@
   margin: 0 0 1rem;
 }
 
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 1rem 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+  content: "";
+}
+
+.google-sign-in {
+  width: 100%;
+  justify-self: stretch;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: inherit;
+}
+
 .account-bar {
   display: flex;
   align-items: center;

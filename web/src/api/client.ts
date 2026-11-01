@@ -7,9 +7,14 @@ import type {
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "/api").replace(/\/$/, "");
 
-type TokenResponse = {
+export type TokenResponse = {
   access_token: string;
   token_type: "bearer";
+};
+
+export type GoogleAuthConfig = {
+  client_id: string;
+  redirect_uri: string;
 };
 
 type UserResponse = {
@@ -130,6 +135,25 @@ export function loginUser(
   return request<TokenResponse>("/auth/login", {
     method: "POST",
     body: JSON.stringify({ email, password }),
+  });
+}
+
+export function getGoogleAuthConfig(): Promise<GoogleAuthConfig> {
+  return request<GoogleAuthConfig>("/auth/google/config");
+}
+
+export function exchangeGoogleCode(
+  code: string,
+  codeVerifier: string,
+  nonce: string,
+): Promise<TokenResponse> {
+  return request<TokenResponse>("/auth/google/exchange", {
+    method: "POST",
+    body: JSON.stringify({
+      code,
+      code_verifier: codeVerifier,
+      nonce,
+    }),
   });
 }
 

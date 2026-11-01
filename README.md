@@ -266,6 +266,9 @@ With **`docker compose`**, the **lexory** service receives **`QDRANT_URL`**, **`
 | `JWT_SECRET` | Required in `.env` | Persistent signing secret for access tokens; generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
 | `JWT_ALGORITHM` | From `.env` / default `HS256` | JWT signing algorithm |
 | `AUTH_COOKIE_SECURE` | From `.env` / default `true` | Refresh-cookie security; keep enabled when served over HTTPS |
+| `GOOGLE_CLIENT_ID` | From `.env` | OAuth 2.0 web client ID used by Google sign-in |
+| `GOOGLE_CLIENT_SECRET` | From `.env` | OAuth 2.0 client secret; backend only |
+| `GOOGLE_REDIRECT_URI` | From `.env` / default `http://localhost:5173/auth/callback` | Must match an authorized redirect URI in Google Cloud |
 | `REDIS_URL` | `redis://redis:6379/0` in Compose | Redis connection for persistent refresh sessions; defaults to localhost outside Compose |
 
 ### Authentication
@@ -275,6 +278,12 @@ A persistent HttpOnly refresh cookie restores sign-in after reloads and
 browser restarts, and is rotated automatically. The refresh session remains in Redis
 until logout; browsers may cap cookie lifetime, so it is renewed on refresh and requires
 sign-in again after 100 days without use. Use `POST /auth/logout` to revoke it.
+
+The web app also supports Google sign-in using an authorization-code flow with PKCE,
+state, and nonce validation. Configure `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
+and `GOOGLE_REDIRECT_URI` in `.env`; add the exact redirect URI to the Google OAuth
+client's authorized redirect URIs. For local Vite development, the redirect is
+`http://localhost:5173/auth/callback`.
 
 ### Database schema and Alembic
 
@@ -286,7 +295,9 @@ On application startup, the service runs `alembic upgrade head` (using a **sync*
 alembic upgrade head
 ```
 
-Current tables (evolve with migrations) include, among others: **`users`**, **`mistake_occurrences`**, **`lesson_artifacts`**, **`exercises`**, **`exercise_attempts`**, **`user_scoring_events`**.
+Current tables (evolve with migrations) include, among others: **`users`**,
+**`external_identities`**, **`mistake_occurrences`**, **`lesson_artifacts`**,
+**`exercises`**, **`exercise_attempts`**, **`user_scoring_events`**.
 
 `DATABASE_URL` is the privileged migration/admin connection. The application itself
 must use `APP_DATABASE_URL`, which authenticates as the restricted `lexory_app` role;

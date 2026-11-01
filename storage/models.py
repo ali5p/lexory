@@ -2,7 +2,15 @@
 
 from typing import Optional
 
-from sqlalchemy import ForeignKey, Boolean, Float, Integer, String, UniqueConstraint, Text
+from sqlalchemy import (
+    Boolean,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -16,7 +24,7 @@ class DBUser(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     email: Mapped[str] = mapped_column(unique=True, index=True)
-    hashed_password: Mapped[str] = mapped_column(String)
+    hashed_password: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     external_identities: Mapped[list["DBExternalIdentity"]] = relationship(
             back_populates="user",
             cascade="all, delete-orphan",

@@ -34,6 +34,7 @@ Ensure the API allows your Pages origin via `LEXORY_CORS_ORIGINS`.
 ## API contract
 
 - `POST /auth/register` and `POST /auth/login` — create an account and obtain an access token
+- `GET /auth/google/config` and `POST /auth/google/exchange` — configure Google sign-in and exchange the PKCE authorization code
 - `POST /auth/refresh` and `POST /auth/logout` — rotate or revoke the HttpOnly refresh cookie
 - `POST /submit` — text → lessons and exercises (requires a bearer access token)
 - `POST /exercises/{id}/answer` — grade MCQ or fill-blank (requires a bearer access token)
@@ -41,5 +42,11 @@ Ensure the API allows your Pages origin via `LEXORY_CORS_ORIGINS`.
 The UI signs in before showing the learning flow and refreshes the session cookie
 automatically on reload. Sign out revokes the refresh
 session.
+
+Google sign-in redirects to `/auth/callback` in the web app. Configure
+`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` on the backend,
+and register the exact redirect URI in Google Cloud. The frontend stores the temporary
+PKCE verifier and OAuth state in `sessionStorage`; the Google client secret stays on
+the backend.
 
 Types live in `src/api/types.ts` and should stay aligned with FastAPI OpenAPI.

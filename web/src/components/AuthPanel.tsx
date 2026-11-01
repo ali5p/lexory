@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { loginUser, registerUser } from "../api/client";
+import { startGoogleSignIn } from "../api/googleOAuth";
 
 type Props = {
   onAuthenticated: (accessToken: string) => void;
@@ -25,6 +26,17 @@ export function AuthPanel({ onAuthenticated }: Props) {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Authentication failed.");
     } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleGoogleSignIn() {
+    setLoading(true);
+    setError(null);
+    try {
+      await startGoogleSignIn();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Google sign-in failed.");
       setLoading(false);
     }
   }
@@ -69,6 +81,17 @@ export function AuthPanel({ onAuthenticated }: Props) {
         </button>
         {error ? <p className="feedback error">{error}</p> : null}
       </form>
+      <div className="auth-divider" aria-hidden="true">
+        <span>or</span>
+      </div>
+      <button
+        className="google-sign-in"
+        type="button"
+        onClick={handleGoogleSignIn}
+        disabled={loading}
+      >
+        {loading ? "Please wait…" : "Continue with Google"}
+      </button>
       <button
         className="text-button"
         type="button"
