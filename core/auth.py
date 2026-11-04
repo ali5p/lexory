@@ -10,7 +10,7 @@ import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
-from typing import Annotated, Any
+from typing import Annotated, Any, NoReturn
 
 import httpx
 import jwt
@@ -284,13 +284,23 @@ async def login_user(
     return TokenResponse(access_token=create_access_token(user.id))
 
 
-@router.get("/google/config")
-def get_google_auth_config() -> dict[str, str]:
-    if not GOOGLE_CLIENT_ID:
+def raise_google_auth_failed() -> NoReturn:
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Google authentication failed",
+    )
+
+def require_google_auth():
+    if not all([GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI]):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Google sign-in is not configured",
+            detail="Google sing-in is not configured on this server.",
         )
+
+
+@router.get("/google/config")
+def get_google_auth_config() -> dict[str, str]:
+    
     return {
         "client_id": GOOGLE_CLIENT_ID,
         "redirect_uri": GOOGLE_REDIRECT_URI,
@@ -298,11 +308,8 @@ def get_google_auth_config() -> dict[str, str]:
 
 
 def exchange_google_code(code: str, code_verifier: str) -> str:
-    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Google sign-in is not configured",
-        )
+
+    require_google_auth()
 
     try:
         with httpx.Client(timeout=10.0) as client:
@@ -321,10 +328,7 @@ def exchange_google_code(code: str, code_verifier: str) -> str:
             token_response = response.json()
     except (httpx.HTTPError, ValueError) as exc:
         logger.info("Google authorization-code exchange failed")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Google authentication failed",
-        ) from exc
+        raise_google_auth_failed()
 
     id_token = (
         token_response.get("id_token")
@@ -332,10 +336,7 @@ def exchange_google_code(code: str, code_verifier: str) -> str:
         else None
     )
     if not isinstance(id_token, str) or not id_token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Google authentication failed",
-        )
+        raise_google_auth_failed()
     return id_token
 
 
@@ -348,30 +349,19 @@ def verify_google_identity(token: str, expected_nonce: str) -> tuple[str, str]:
         )
     except (ValueError, GoogleAuthError) as exc:
         logger.info("Google ID-token validation failed")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Google authentication failed",
-        ) from exc
+        raise_google_auth_failed()
 
     if claims.get("nonce") != expected_nonce:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Google authentication failed",
-        )
+        raise_google_auth_failed()
 
     subject = claims.get("sub")
     email = claims.get("email")
     if (
-        not isinstance(subject, str)
-        or not subject
-        or not isinstance(email, str)
-        or not email
+        not isinstance(subject, str) or not subject
+        or not isinstance(email, str) or not email
         or claims.get("email_verified") is not True
     ):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Google authentication failed",
-        )
+        raise_google_auth_failed()
 
     return subject, email.strip().lower()
 
@@ -409,10 +399,7 @@ async def google_code_exchange(
     if identity is not None:
         user = await db.get(DBUser, identity.user_id)
         if user is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Google authentication failed",
-            )
+            raise_google_auth_failed()
         return await issue_app_session(user, response, request.app.state.redis_client)
 
     user = DBUser(
@@ -469,10 +456,7 @@ async def google_code_exchange(
             ) from exc
         user = await db.get(DBUser, identity.user_id)
         if user is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Google authentication failed",
-            ) from exc
+            raise_google_auth_failed()
 
     return await issue_app_session(user, response, request.app.state.redis_client)
 
