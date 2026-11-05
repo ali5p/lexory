@@ -78,6 +78,18 @@ class GoogleCodeExchange(BaseModel):
     nonce: str = Field(min_length=32, max_length=128)    
 
 
+def handle_redis_failure(
+    log_message: str, 
+    exc: RedisError,
+    user_detail: str = "Authentication session store is unavailable"
+) -> NoReturn:
+    logger.exception(log_message)
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=user_detail,
+    ) from exc
+
+
 def get_jwt_secret() -> str:
     secret = os.getenv("JWT_SECRET", "").strip()
     if len(secret) < 32:
@@ -113,11 +125,8 @@ async def issue_app_session(
             ex=REFRESH_COOKIE_MAX_AGE,
         )
     except RedisError as exc:
-        logger.exception("Could not create a Google authentication session in Redis")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Authentication session store is unavailable",
-        ) from exc
+        handle_redis_failure("Could not create a Google authentication session in Redis", exc)
+
     _set_refresh_cookie(response, refresh_token)
 
     return TokenResponse(
@@ -274,11 +283,8 @@ async def login_user(
             user.id,
         )
     except RedisError as exc:
-        logger.exception("Could not create an authentication session in Redis")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Authentication session store is unavailable",
-        ) from exc
+        handle_redis_failure("Could not create an authentication session in Redis", exc)
+
 
     _set_refresh_cookie(response, refresh_token)
     return TokenResponse(access_token=create_access_token(user.id))
@@ -476,11 +482,7 @@ async def refresh_session(request: Request, response: Response) -> TokenResponse
             _refresh_token_key(refresh_token)
         )
     except RedisError as exc:
-        logger.exception("Could not refresh an authentication session in Redis")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Authentication session store is unavailable",
-        ) from exc
+        handle_redis_failure("Could not rotate an authentication session in Redis", exc)
 
     if not user_id:
         raise HTTPException(
@@ -495,11 +497,7 @@ async def refresh_session(request: Request, response: Response) -> TokenResponse
             user_id,
         )
     except RedisError as exc:
-        logger.exception("Could not rotate an authentication session in Redis")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Authentication session store is unavailable",
-        ) from exc
+        handle_redis_failure("Could not rotate an authentication session in Redis", exc)
 
     _set_refresh_cookie(response, new_refresh_token)
     return TokenResponse(access_token=create_access_token(user_id))
@@ -515,11 +513,8 @@ async def logout(request: Request, response: Response) -> dict[str, str]:
                 _refresh_token_key(refresh_token)
             )
         except RedisError as exc:
-            logger.exception("Could not revoke an authentication session in Redis")
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Authentication session store is unavailable",
-            ) from exc
+            handle_redis_failure("Could not revoke an authentication session in Redis", exc)
+
 
     _delete_refresh_cookie(response)
     return {"detail": "Logged out"}
