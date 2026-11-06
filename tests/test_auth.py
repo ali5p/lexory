@@ -237,7 +237,7 @@ async def test_google_exchange_explains_existing_password_account(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_submit_uses_authenticated_user_id():
+async def test_submit_does_not_forward_a_user_id_to_the_service():
     rag_service = AsyncMock()
     account = DBUser(
         id="account-id",
@@ -250,14 +250,11 @@ async def test_submit_uses_authenticated_user_id():
 
     await submit_and_lesson(request, rag_service, account)
 
-    rag_service.submit_and_lesson.assert_awaited_once_with(
-        text="I has a book.",
-        user_id="account-id",
-    )
+    rag_service.submit_and_lesson.assert_awaited_once_with(text="I has a book.")
 
 
 @pytest.mark.asyncio
-async def test_exercise_answer_uses_authenticated_user_id():
+async def test_exercise_answer_does_not_forward_a_user_id_to_the_service():
     rag_service = AsyncMock()
     account = DBUser(
         id="account-id",
@@ -280,5 +277,4 @@ async def test_exercise_answer_uses_authenticated_user_id():
     rag_service.process_exercise_answer.assert_awaited_once_with(
         "exercise-id",
         request,
-        user_id="account-id",
     )

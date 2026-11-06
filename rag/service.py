@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from core.context import require_current_user_id
 from core.exercise_rotation import exercise_type_for_selection_index
 from core.exercises import (
     ExerciseAnswerRequest,
@@ -97,23 +98,25 @@ class RAGService:
         )
         self.lt_tool = create_language_tool()
 
-    async def ingest_user_text(
-        self, user_text: UserText
+    async def _ingest_user_text(
+        self,
+        user_text: UserText,
     ) -> tuple[str, str, List[dict], List[dict]]:
         """
         Ingest user text, process through LanguageTool, deduplicate, store.
-        Returns: (user_text_id, session_id, session_candidate_points, detected_mistakes).
+        Returns: user_text_id, session_id, session_candidate_points, detected_mistakes.
         session_candidate_points: point-like dicts intercepted after category check
         and before semantic dedup, for use in query embedding.
         detected_mistakes: every LanguageTool event from this submission (for API).
         """
+        user_id = require_current_user_id()
         session_id = str(uuid.uuid4())
         user_text_id = str(uuid.uuid4())
 
         self.text_store.store(
             user_text_id=user_text_id,
             text=user_text.text,
-            user_id=user_text.user_id,
+            user_id=user_id,
             session_id=session_id,
             detected_at=user_text.detected_at,
         )
@@ -124,7 +127,7 @@ class RAGService:
         try:
             events = process_text(
                 text=user_text.text,
-                user_id=user_text.user_id,
+                user_id=user_id,
                 user_text_id=user_text_id,
                 session_id=session_id,
                 detected_at=user_text.detected_at,
@@ -437,8 +440,9 @@ class RAGService:
             await repo.recompute_user_mistake_type_stats(session, user_id)
             await session.commit()
 
-    async def submit_and_lesson(self, text: str, user_id: str) -> SubmitResponse:
+    async def submit_and_lesson(self, text: str) -> SubmitResponse:
         """Combined ingest + lesson generation. Single flow trigger."""
+        user_id = require_current_user_id()
         session_id: str
         user_text_id: Optional[str] = None
         detected_mistakes_raw: List[dict] = []
@@ -450,8 +454,8 @@ class RAGService:
                 session_id,
                 session_candidate_points,
                 detected_mistakes_raw,
-            ) = await self.ingest_user_text(
-                UserText(text=text.strip(), user_id=user_id)
+            ) = await self._ingest_user_text(
+                UserText(text=text.strip()),
             )
         else:
             session_id = str(uuid.uuid4())
@@ -540,9 +544,8 @@ class RAGService:
         self,
         exercise_id: str,
         request: ExerciseAnswerRequest,
-        *,
-        user_id: str,
     ) -> ExerciseAnswerResponse:
+        user_id = require_current_user_id()
         exercise_attempt_id = str(uuid.uuid4())
         attempt_timestamp = datetime.now(timezone.utc)
 

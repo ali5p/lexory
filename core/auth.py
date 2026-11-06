@@ -453,7 +453,8 @@ async def google_code_exchange(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=(
                         "An account with this email already exists. "
-                        "Sign in using its existing method."
+                        "Sign in using its existing method; accounts are not "
+                        "linked automatically."
                     ),
                 ) from exc
             raise HTTPException(

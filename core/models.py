@@ -8,7 +8,6 @@ from core.exercises import ExercisePayload
 
 class UserText(BaseModel):
     text: str
-    user_id: str
     detected_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
