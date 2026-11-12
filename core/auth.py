@@ -281,6 +281,7 @@ async def login_user(
         await request.app.state.redis_client.set(
             _refresh_token_key(refresh_token),
             user.id,
+            ex=REFRESH_COOKIE_MAX_AGE,
         )
     except RedisError as exc:
         handle_redis_failure("Could not create an authentication session in Redis", exc)
@@ -332,7 +333,7 @@ def exchange_google_code(code: str, code_verifier: str) -> str:
             )
             response.raise_for_status()
             token_response = response.json()
-    except (httpx.HTTPError, ValueError) as exc:
+    except (httpx.HTTPError, ValueError):
         logger.info("Google authorization-code exchange failed")
         raise_google_auth_failed()
 
@@ -353,7 +354,7 @@ def verify_google_identity(token: str, expected_nonce: str) -> tuple[str, str]:
             GoogleRequest(),
             GOOGLE_CLIENT_ID,
         )
-    except (ValueError, GoogleAuthError) as exc:
+    except (ValueError, GoogleAuthError):
         logger.info("Google ID-token validation failed")
         raise_google_auth_failed()
 
@@ -496,6 +497,7 @@ async def refresh_session(request: Request, response: Response) -> TokenResponse
         await request.app.state.redis_client.set(
             _refresh_token_key(new_refresh_token),
             user_id,
+            ex=REFRESH_COOKIE_MAX_AGE,
         )
     except RedisError as exc:
         handle_redis_failure("Could not rotate an authentication session in Redis", exc)

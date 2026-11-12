@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.routes import submit_and_lesson, submit_exercise_answer
 from core.auth import (
+    REFRESH_COOKIE_MAX_AGE,
     GoogleCodeExchange,
     UserCreate,
     create_access_token,
@@ -74,7 +75,7 @@ async def test_get_current_user_rejects_missing_credentials(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_refresh_rotates_persistent_session_until_logout(monkeypatch):
+async def test_refresh_rotates_session_with_sliding_expiry(monkeypatch):
     monkeypatch.setenv("JWT_SECRET", "x" * 40)
     redis_client = AsyncMock()
     redis_client.getdel.return_value = "account-id"
@@ -91,7 +92,7 @@ async def test_refresh_rotates_persistent_session_until_logout(monkeypatch):
     assert token.access_token
     redis_client.getdel.assert_awaited_once()
     redis_client.set.assert_awaited_once()
-    assert "ex" not in redis_client.set.await_args.kwargs
+    assert redis_client.set.await_args.kwargs["ex"] == REFRESH_COOKIE_MAX_AGE
     cookie = response.headers["set-cookie"].lower()
     assert "max-age=8640000" in cookie
     assert "httponly" in cookie
@@ -108,6 +109,7 @@ async def test_google_session_uses_redis_and_sets_refresh_cookie(monkeypatch):
 
     assert token.access_token
     redis_client.set.assert_awaited_once()
+    assert redis_client.set.await_args.kwargs["ex"] == REFRESH_COOKIE_MAX_AGE
     cookie = response.headers["set-cookie"].lower()
     assert "httponly" in cookie
 
@@ -131,6 +133,38 @@ async def test_password_login_rejects_google_only_account():
         )
 
     assert exc_info.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_password_login_sets_refresh_token_expiry(monkeypatch):
+    import core.auth as auth
+
+    monkeypatch.setenv("JWT_SECRET", "x" * 40)
+    monkeypatch.setattr(auth, "verify_password", lambda *_args: True)
+    user = DBUser(
+        id="password-account",
+        email="person@example.com",
+        hashed_password="hashed-password",
+    )
+    db = AsyncMock(spec=AsyncSession)
+    db.scalar.return_value = user
+    redis_client = AsyncMock()
+    request = SimpleNamespace(
+        headers={"origin": "http://testserver"},
+        base_url="http://testserver/",
+        app=SimpleNamespace(state=SimpleNamespace(redis_client=redis_client)),
+    )
+
+    token = await login_user(
+        UserCreate(email=user.email, password="valid-password"),
+        request,
+        Response(),
+        db,
+    )
+
+    assert token.access_token
+    redis_client.set.assert_awaited_once()
+    assert redis_client.set.await_args.kwargs["ex"] == REFRESH_COOKIE_MAX_AGE
 
 
 def test_google_only_accounts_allow_missing_password_hash():
