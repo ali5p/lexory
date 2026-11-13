@@ -1,4 +1,3 @@
-import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
@@ -41,31 +40,6 @@ from rag.pipelines.languagetool_pipeline import create_language_tool, process_te
 from storage import repositories as repo
 from vectorstore.qdrant_client import QdrantStore
 
-_missing_artifacts = logging.getLogger("lexory.missing_artifacts")
-
-
-class InMemoryTextStore:
-    """Session-scoped text buffer (kept until LanguageTool finishes processing)."""
-
-    def __init__(self):
-        self.texts: Dict[str, dict] = {}
-
-    def store(
-        self,
-        user_text_id: str,
-        text: str,
-        user_id: str,
-        session_id: Optional[str],
-        detected_at: datetime,
-    ):
-        self.texts[user_text_id] = {
-            "user_text_id": user_text_id,
-            "text": text,
-            "user_id": user_id,
-            "session_id": session_id,
-            "detected_at": detected_at.isoformat(),
-        }
-
 
 class RAGService:
     def __init__(
@@ -77,7 +51,6 @@ class RAGService:
         self.qdrant = qdrant_store
         self.embedder = embedder
         self.session_factory = session_factory
-        self.text_store = InMemoryTextStore()
         self.max_context_items = 10
         self.max_primary_mistakes = 3
         self.supplemental_every_n_submits = 2
@@ -112,15 +85,6 @@ class RAGService:
         user_id = require_current_user_id()
         session_id = str(uuid.uuid4())
         user_text_id = str(uuid.uuid4())
-
-        self.text_store.store(
-            user_text_id=user_text_id,
-            text=user_text.text,
-            user_id=user_id,
-            session_id=session_id,
-            detected_at=user_text.detected_at,
-        )
-
         session_candidate_points: List[dict] = []
         detected_mistakes: List[dict] = []
 
